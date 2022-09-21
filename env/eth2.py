@@ -4,7 +4,8 @@ import numpy as np
 
 class Eth2(gym.Env):
     def __init__(self):
-        print("Eth2 initialized")
+        #print("Eth2 initialized")
+        pass
 
     def init(self, txs, allocate, n_samples=None, **kwargs):
         if n_samples is None:
@@ -266,13 +267,17 @@ class Eth2v2(Eth2):
         self.sblock = [[] for i in range(self.n_shards)]
 
     def info(self):
+        n_block = 0
         n_block_tx = 0
         n_block_out_tx = 0
         n_block_forward_tx = 0
         n_block_inner_tx = 0
+        tx_wasted = [0 for i in range(self.n_shards)]
         for s in range(self.n_shards):
             blocks = self.sblock[s]
+            n_block += len(blocks)
             for block in blocks:
+                n_block_tx += len(block)
                 for tx in block:
                     if abs(tx)!=s:
                         n_block_out_tx += 1
@@ -280,23 +285,34 @@ class Eth2v2(Eth2):
                         n_block_inner_tx += 1
                     else:
                         n_block_forward_tx += 1
-                    n_block_tx += 1
+                tx_wasted[s] += self.tx_per_block - len(block)
+        n_wasted = sum(tx_wasted)
 
         result = dict(
             n_shards = self.n_shards,
+            blocks_per_epoch = self.n_blocks,
+            tx_rate = self.tx_rate,
+            tx_per_block = self.tx_per_block,
+            block_interval = self.block_interval,
+            simulate_time = self.simulate_time,
+            n_block = n_block,
+            target_n_block = self.n_shards*self.simulate_time/self.block_interval,
             n_tx = self.ptx,
             n_inner_tx = self.n_inner_tx,
             n_cross_tx = self.n_cross_tx,
+            prop_cross_tx = float(self.n_cross_tx) / self.ptx,
             n_block_tx = n_block_tx,
             n_block_out_tx = n_block_out_tx,
             n_block_forward_tx = n_block_forward_tx,
             n_block_inner_tx = n_block_inner_tx,
-            simulate_time = self.simulate_time,
             throughput = n_block_tx/self.simulate_time,
             actual_throughput = (n_block_inner_tx+n_block_forward_tx)/self.simulate_time,
-            ideal_throughput = self.tx_per_block*self.n_shards/self.block_interval,
+            target_throughput = self.tx_per_block*self.n_shards/self.block_interval,
             tx_pool_length = [len(pool) for pool in self.stx_pool],
-            tx_forward_length = [len(forward) for forward in self.stx_forward]
+            tx_forward_length = [len(forward) for forward in self.stx_forward],
+            n_wasted = n_wasted,
+            tx_wasted = tx_wasted,
+            prop_wasted = float(n_wasted) / (n_block * self.tx_per_block)
         )
         return result
 
@@ -306,7 +322,7 @@ class Eth2v3(Eth2v2):
     #params: 
     #  n_blocks: number of blocks per step
     def step(self, action=None):
-        print('Eth2 v3 step', action)
+        # print('Eth2 v3 step', action)
         # one step contains several blocks
         n_blocks = self.n_blocks
         n_shards = self.n_shards
@@ -363,3 +379,6 @@ class Eth2v3(Eth2v2):
         self.stx_pool = [deque() for i in range(self.n_shards)]
         self.stx_forward = [deque() for i in range(self.n_shards)]
         self.sblock = [deque() for i in range(self.n_shards)]
+
+        return self.stx_pool, self.sblock
+

@@ -9,7 +9,7 @@ class DataLoader:
         data = self.cursor.fetchone()
         print("Database Version: %s"%data)
 
-    def get_data(self, start_time, end_time=None):
+    def load_data(self, start_time, end_time=None):
         # start_time : timestamp or time str with format "%Y-%m-%d %H:%M:%S"
         if isinstance(start_time, int):
             pass
@@ -18,7 +18,7 @@ class DataLoader:
             if re.match(r'^\d+-\d+-\d+ \d+:\d+:\d+$', start_time) is None:
                 raise TypeError(f"{start_time} is not an valid time str")
             import time, datetime
-            start_time = int(datetime.datetime.strptime(start_time_str, '%Y-%m-%d %H:%M:%S').timestamp())
+            start_time = int(datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S').timestamp())
         else:
             raise TypeError(f"{start_time} is not an int or str")
         cursor = self.cursor
