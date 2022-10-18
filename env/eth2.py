@@ -38,8 +38,8 @@ class Eth2(gym.Env):
         ptx = self.ptx
         self.ptx += 1
         tx = self.txs.iloc[ptx]
-        s_from = allocate.allocate(tx['from'])
-        s_to = allocate.allocate(tx['to'])
+        s_from = allocate.allocate(tx['from_addr'])
+        s_to = allocate.allocate(tx['to_addr'])
         tx = {'id':self.tx_count, 's_from':s_from, 's_to':s_to, 'time':self.simulate_time}
         self.shard_tx_pool[tx['s_from']].append(tx)
         self.tx_count += 1
@@ -155,8 +155,8 @@ class Eth2v1(Eth2):
             self.ptx += tx_count
             self.tx_count += tx_count
             for i, tx in txs.iterrows():
-                s_from = allocate.allocate(tx['from'])
-                s_to = allocate.allocate(tx['to'])
+                s_from = allocate.allocate(tx['from_addr'])
+                s_to = allocate.allocate(tx['to_addr'])
                 tx = {'s_from':s_from, 's_to':s_to}
                 self.shard_tx_pool[tx['s_from']].append(tx)
                 self.tx_count += 1
@@ -213,8 +213,8 @@ class Eth2v2(Eth2):
         txs = self.txs.iloc[self.ptx : self.ptx+epoch_tx_count]
         self.ptx += epoch_tx_count
 
-        s_from = txs['from'].apply(allocate.allocate) # from shard index
-        s_to = txs['to'].apply(allocate.allocate) # to shard index
+        s_from = txs['from_addr'].apply(allocate.allocate) # from shard index
+        s_to = txs['to_addr'].apply(allocate.allocate) # to shard index
 
         self.n_cross_tx += len(s_from[s_from!=s_to])
         self.n_inner_tx += len(s_from[s_from==s_to])
@@ -340,8 +340,8 @@ class Eth2v3(Eth2v2):
         txs = self.txs.iloc[self.ptx : self.ptx+epoch_tx_count]
         self.ptx += epoch_tx_count
 
-        s_from = txs['from'].apply(allocate.allocate) # from shard index
-        s_to = txs['to'].apply(allocate.allocate) # to shard index
+        s_from = txs['from_addr'].apply(allocate.allocate) # from shard index
+        s_to = txs['to_addr'].apply(allocate.allocate) # to shard index
 
         n_cross = len(s_from[s_from!=s_to])
         self.n_cross_tx += n_cross
@@ -382,3 +382,219 @@ class Eth2v3(Eth2v2):
 
         return self.stx_pool, self.sblock
 
+class TxBuffView:
+    def __init__(self, buff, start, length):
+        self.buff_size = len(buff)
+        self.buff = buff
+        self.start = start
+        self.length = length
+    
+    def __len__(self):
+        return self.length
+    
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            start = i.start if i.start is not None else 0
+            stop = i.stop if i.stop is not None else self.length
+            if start < 0:
+                start += self.length
+            if stop < 0:
+                stop += self.length
+            assert(0<=start and start<=stop and stop<=self.length)
+            return TxBuffView(self.buff, (start+self.start)%self.buff_size, stop-start)
+        if i < 0:
+            i += self.length
+        assert(i<self.length)
+        return self.buff[(self.start+i)%self.buff_size]
+    
+    def __iter__(self):
+        for i in range(self.start, self.start+self.length):
+            yield self.buff[i%self.buff_size]
+    
+    def __str__(self):
+        return str(list(x for x in self))
+    
+    def __repr__(self):
+        return f'TxBuffView(buff_size={self.buff_size},start={self.start},length={self.length}):'+str(self)
+
+class TxBuff(TxBuffView):
+    def __init__(self, buff_size, dtype=np.int32, allow_growth=True):
+        self.dtype = dtype
+        self.allow_growth = allow_growth
+        super().__init__(buff=np.zeros(shape=buff_size, dtype=dtype), start=0, length=0)
+
+    def grow(self):
+        self.buff.resize(self.buff_size + self.buff_size)
+        self.buff[self.buff_size:] = self.buff[:self.buff_size]
+        self.buff_size += self.buff_size
+
+    def extend(self, txs):
+        n = len(txs)
+        while self.length + n > self.buff_size:
+            if not self.allow_growth:
+                raise OverflowError
+            self.grow()
+        end = (self.start + self.length) % self.buff_size
+        if end + n <= self.buff_size:
+            self.buff[end:end+n] = txs
+        else:
+            front = self.buff_size-end
+            self.buff[end:] = txs[:front]
+            rest = n - front
+            self.buff[:rest] = txs[front:]
+        self.length += n
+
+    def append(self, tx):
+        if self.length >= self.buff_size:
+            if not self.allow_growth:
+                raise OverflowError
+            self.grow()
+        self.buff[(self.start + self.length) % self.buff_size] = tx
+        self.length += 1
+    
+    def popnleft(self, n):
+        assert(self.length>=n)
+        ret = self[:n]
+        self.start = (self.start + n) % self.buff_size
+        self.length -= n
+        return ret
+
+#from eth2v4 import TxBuffView, TxBuff
+
+class Eth2v4(gym.Env):
+    def __init__(self):
+        #print("Eth2v4 initialized")
+        pass
+
+    def init(self, txs, allocate, n_samples=None, tx_rate=1000, tx_per_block=200, block_interval=15, n_blocks=10, pool_size=10000000):
+        if n_samples is None:
+            self.txs = txs
+        else:
+            self.txs = txs.sample(n_samples)
+        self.tx_rate = tx_rate
+        self.tx_per_block = tx_per_block
+        self.block_interval = block_interval
+
+        self.allocate = allocate
+        self.k = allocate.k
+        self.n_shards = 1<<self.k
+
+        self.n_blocks = n_blocks
+        self.pool_size = pool_size
+
+        self.reset()
+
+    def reset(self):
+        self.ptx = 0
+        self.n_cross_tx = 0
+        self.n_inner_tx = 0
+        self.simulate_time = 0
+
+        self.stx_pool = [TxBuff(self.pool_size) for i in range(self.n_shards)]
+        self.stx_forward = [TxBuff(self.pool_size) for i in range(self.n_shards)]
+        self.sblock = [deque() for i in range(self.n_shards)]
+
+        observation = [self.stx_pool, self.stx_forward, self.sblock]
+
+        return observation, None, 0, None
+
+    def step(self, action=None):
+        # print('Eth2 v4 step', action)
+        # one step contains self.n_blocks blocks
+        n_blocks = self.n_blocks
+        n_shards = self.n_shards
+        allocate = self.allocate
+        allocate.apply(action)
+        tx_per_block = self.tx_per_block
+        block_interval = self.block_interval
+        tx_rate = self.tx_rate
+        tx_count = block_interval * tx_rate
+
+        epoch_time = n_blocks * block_interval
+        self.simulate_time += epoch_time
+
+        epoch_tx_count = tx_count * n_blocks
+        txs = self.txs.iloc[self.ptx : self.ptx+epoch_tx_count]
+        self.ptx += epoch_tx_count
+
+        s_from = txs['from_addr'].apply(allocate.allocate) # from shard index
+        s_to = txs['to_addr'].apply(allocate.allocate) # to shard index
+
+        n_cross = len(s_from[s_from!=s_to])
+        self.n_cross_tx += n_cross
+        self.n_inner_tx += len(s_from)-n_cross
+
+        sgroup = s_to.groupby(s_from)
+        stx_pool = self.stx_pool
+        stx_forward = self.stx_forward
+        for g, group in sgroup:
+            stx_pool[g].extend(group.values)
+        
+        for b in range(n_blocks):
+            for s in range(n_shards):
+                tx_pool = stx_pool[s]
+                tx_forward = stx_forward[s]
+                block_txs = TxBuff(tx_per_block)
+                n_forward = min(len(tx_forward), tx_per_block)
+                block_txs.extend(tx_forward.popnleft(n_forward))
+                n_pool = min(len(tx_pool), tx_per_block-len(block_txs))
+                block_txs.extend(tx_pool.popnleft(n_pool))
+                self.sblock[s].append(block_txs)
+            for s in range(n_shards):
+                block = self.sblock[s][-1]
+                for tx in block:
+                    if abs(tx)!=s:
+                        stx_forward[tx].append(-tx)
+        observation = [self.stx_pool, self.stx_forward, self.sblock]
+        reward = 0
+        return observation, reward, 0, None
+
+    def info(self):
+        n_block = 0
+        n_block_tx = 0
+        n_block_out_tx = 0
+        n_block_forward_tx = 0
+        n_block_inner_tx = 0
+        tx_wasted = [0 for i in range(self.n_shards)]
+        for s in range(self.n_shards):
+            blocks = self.sblock[s]
+            n_block += len(blocks)
+            for block in blocks:
+                n_block_tx += len(block)
+                for tx in block:
+                    if abs(tx)!=s:
+                        n_block_out_tx += 1
+                    elif tx>0:
+                        n_block_inner_tx += 1
+                    else:
+                        n_block_forward_tx += 1
+                tx_wasted[s] += self.tx_per_block - len(block)
+        n_wasted = sum(tx_wasted)
+
+        result = dict(
+            n_shards = self.n_shards,
+            blocks_per_epoch = self.n_blocks,
+            tx_rate = self.tx_rate,
+            tx_per_block = self.tx_per_block,
+            block_interval = self.block_interval,
+            simulate_time = self.simulate_time,
+            n_block = n_block,
+            target_n_block = self.n_shards*self.simulate_time/self.block_interval,
+            n_tx = self.ptx,
+            n_inner_tx = self.n_inner_tx,
+            n_cross_tx = self.n_cross_tx,
+            prop_cross_tx = float(self.n_cross_tx) / self.ptx,
+            n_block_tx = n_block_tx,
+            n_block_out_tx = n_block_out_tx,
+            n_block_forward_tx = n_block_forward_tx,
+            n_block_inner_tx = n_block_inner_tx,
+            throughput = n_block_tx/self.simulate_time,
+            actual_throughput = (n_block_inner_tx+n_block_forward_tx)/self.simulate_time,
+            target_throughput = self.tx_per_block*self.n_shards/self.block_interval,
+            tx_pool_length = [len(pool) for pool in self.stx_pool],
+            tx_forward_length = [len(forward) for forward in self.stx_forward],
+            n_wasted = n_wasted,
+            tx_wasted = tx_wasted,
+            prop_wasted = float(n_wasted) / (n_block * self.tx_per_block)
+        )
+        return result

@@ -5,3 +5,5 @@ __pycache__
 *.so
 *.o
 *.csv
+*.egg
+*.egg-info
