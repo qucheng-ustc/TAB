@@ -42,3 +42,11 @@ class DataLoader:
         print(len(df_tx))
         return df_block, df_tx
 
+default_dataloader = None
+
+def get_default_dataloader():
+    global default_dataloader
+    if default_dataloader is None:
+        default_dataloader = DataLoader()
+    return default_dataloader
+
