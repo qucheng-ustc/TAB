@@ -1,3 +1,4 @@
+import numpy as np
 
 class AllocateStrategy:
     def __init__(self, k, addr_len=16):
@@ -9,7 +10,7 @@ class AllocateStrategy:
 
     def apply(self, action):
         pass
-        
+
     def allocate(self, addr):
         raise NotImplementedError
 
@@ -20,6 +21,23 @@ class StaticAllocateStrategy(AllocateStrategy):
 
     def allocate(self, addr):
         return addr >> self.shift
+
+class RandomAllocateStrategy(AllocateStrategy):
+    # random hash addr
+    golden_ratio = 0.61803398874989484820458683436564
+    def __init__(self, k, addr_len=16):
+        super().__init__(k, addr_len=addr_len)
+        self.n_shards = 1<<k
+        self.salt = np.random.randint(1<<addr_len)
+        self.multiplier = int((1<<addr_len)*self.golden_ratio)
+        self.shift = addr_len - k
+        self.mask = (1<<addr_len)-1
+
+    def apply(self, action):
+        self.salt = np.random.randint(1<<self.addr_len)
+
+    def allocate(self, addr):
+        return (((addr^self.salt)*self.multiplier)&self.mask) >> self.shift
 
 class GroupAllocateStrategy(AllocateStrategy):
     def __init__(self, k, g, addr_len=16):

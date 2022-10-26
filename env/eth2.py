@@ -27,6 +27,7 @@ class Eth2(gym.Env):
             if key == 'allocate':
                 self.k = self.allocate.k
                 self.n_shards = 1<<self.k
+        return self
 
     def step(self, action=None):
         print("Eth2 step", action)
@@ -322,6 +323,140 @@ class Eth2v2(Eth2):
 
 from collections import deque
 
+class Eth2v301(Eth2v2):
+    #params: 
+    #  n_blocks: number of blocks per step
+    def step(self, action=None):
+        # print('Eth2 v3 step', action)
+        # one step contains several blocks
+        n_blocks = self.n_blocks
+        n_shards = self.n_shards
+        allocate = self.allocate
+        allocate.apply(action)
+        tx_per_block = self.tx_per_block
+        block_interval = self.block_interval
+        tx_rate = self.tx_rate
+        tx_count = block_interval * tx_rate
+
+        epoch_time = n_blocks * block_interval
+        self.simulate_time += epoch_time
+
+        epoch_tx_count = tx_count * n_blocks
+        txs = self.txs.iloc[self.ptx : self.ptx+epoch_tx_count]
+        self.ptx += epoch_tx_count
+
+        s_from = txs['from_addr'].apply(allocate.allocate) # from shard index
+        s_to = txs['to_addr'].apply(allocate.allocate) # to shard index
+
+        n_cross = len(s_from[s_from!=s_to])
+        self.n_cross_tx += n_cross
+        self.n_inner_tx += len(s_from)-n_cross
+
+        sgroup = s_to.groupby(s_from)
+        stx_pool = self.stx_pool
+        stx_forward = self.stx_forward
+        for g, group in sgroup:
+            stx_pool[g].extend(group)
+        
+        for b in range(n_blocks):
+            for s in range(n_shards):
+                tx_pool = stx_pool[s]
+                tx_forward = stx_forward[s]
+                block_txs = deque()
+                n_forward = min(len(tx_forward), tx_per_block)
+                block_txs.extend(tx_forward.popleft() for _ in range(n_forward))
+                n_pool = min(len(tx_pool), tx_per_block-len(block_txs))
+                block_txs.extend(tx_pool.popleft() for _ in range(n_pool))
+                self.sblock[s].append(block_txs)
+            for s in range(n_shards):
+                block = self.sblock[s][-1]
+                for tx in block:
+                    if abs(tx)!=s:
+                        stx_forward[tx].append(-tx)
+        return self.stx_pool, self.sblock
+
+    def reset(self):
+        self.ptx = 0
+        self.n_cross_tx = 0
+        self.n_inner_tx = 0
+        self.simulate_time = 0
+
+        self.stx_pool = [deque() for i in range(self.n_shards)]
+        self.stx_forward = [deque() for i in range(self.n_shards)]
+        self.sblock = [deque() for i in range(self.n_shards)]
+
+        return self.stx_pool, self.sblock
+
+class Eth2v302(Eth2v2):
+    #params: 
+    #  n_blocks: number of blocks per step
+    def step(self, action=None):
+        # print('Eth2 v3 step', action)
+        # one step contains several blocks
+        n_blocks = self.n_blocks
+        n_shards = self.n_shards
+        allocate = self.allocate
+        allocate.apply(action)
+        tx_per_block = self.tx_per_block
+        block_interval = self.block_interval
+        tx_rate = self.tx_rate
+        tx_count = block_interval * tx_rate
+
+        epoch_time = n_blocks * block_interval
+        self.simulate_time += epoch_time
+
+        epoch_tx_count = tx_count * n_blocks
+        txs = self.txs.iloc[self.ptx:min(self.ptx+epoch_tx_count, len(self.txs))]
+        self.ptx += len(txs)
+        done = self.ptx >= len(self.txs)
+
+        s_from = txs['from_addr'].map(allocate.allocate) # from shard index
+        s_to = txs['to_addr'].map(allocate.allocate) # to shard index
+
+        counts = (s_from == s_to).value_counts()
+        self.n_inner_tx += counts.get(True, default=0)
+        self.n_cross_tx += counts.get(False, default=0)
+
+        sgroup = s_to.groupby(s_from)
+        stx_pool = self.stx_pool
+        stx_forward = self.stx_forward
+        for g, group in sgroup:
+            stx_pool[g].extend(group)
+        
+        for _ in range(n_blocks):
+            for s in range(n_shards):
+                tx_pool = stx_pool[s]
+                tx_forward = stx_forward[s]
+                block_txs = deque()
+                n_forward = min(len(tx_forward), tx_per_block)
+                block_txs.extend(tx_forward.popleft() for _ in range(n_forward))
+                n_pool = min(len(tx_pool), tx_per_block-len(block_txs))
+                block_txs.extend(tx_pool.popleft() for _ in range(n_pool))
+                self.sblock[s].append(block_txs)
+            for s in range(n_shards):
+                block = self.sblock[s][-1]
+                for tx in block:
+                    if abs(tx)!=s:
+                        stx_forward[tx].append(-tx)
+
+        observation = [self.stx_pool, self.stx_forward, self.sblock]
+        reward = 0
+        return observation, reward, done, None
+
+    def reset(self):
+        self.ptx = 0
+        self.n_cross_tx = 0
+        self.n_inner_tx = 0
+        self.simulate_time = 0
+
+        self.stx_pool = [deque() for _ in range(self.n_shards)]
+        self.stx_forward = [deque() for _ in range(self.n_shards)]
+        self.sblock = [deque() for _ in range(self.n_shards)]
+
+        observation = [self.stx_pool, self.stx_forward, self.sblock]
+
+        return observation, None, 0, None
+
 class Eth2v3(Eth2v2):
     #params: 
     #  n_blocks: number of blocks per step
@@ -354,13 +489,12 @@ class Eth2v3(Eth2v2):
         self.simulate_time += epoch_time
 
         epoch_tx_count = tx_count * n_blocks
-        txs = self.txs.loc(axis=1)[['from_addr','to_addr']]
-        txs = txs.iloc(axis=0)[self.ptx:min(self.ptx+epoch_tx_count, len(txs))]
+        txs = self.txs.iloc[self.ptx:min(self.ptx+epoch_tx_count, len(self.txs))].copy()
         self.ptx += len(txs)
         done = self.ptx >= len(self.txs)
 
-        txs.loc(axis=1)['from_shard'] = txs.loc(axis=1)['from_addr'].map(allocate.allocate) # from shard index
-        txs.loc(axis=1)['to_shard'] = txs.loc(axis=1)['to_addr'].map(allocate.allocate) # to shard index
+        txs['from_shard'] = txs['from_addr'].map(allocate.allocate) # from shard index
+        txs['to_shard'] = txs['to_addr'].map(allocate.allocate) # to shard index
 
         counts = (txs['from_shard'] == txs['to_shard']).value_counts()
         self.n_inner_tx += counts.get(True, default=0)
@@ -669,13 +803,12 @@ class Eth2v5(Eth2v3):
 
         # prepare new transactions
         epoch_tx_count = tx_count * n_blocks
-        txs = self.txs.loc(axis=1)[['from_addr','to_addr']]
-        txs = txs.iloc(axis=0)[self.ptx:min(self.ptx+epoch_tx_count, len(txs))]
+        txs = self.txs.iloc[self.ptx:min(self.ptx+epoch_tx_count, len(self.txs))].copy()
         self.ptx += len(txs)
         done = self.ptx >= len(self.txs)
 
-        txs.loc(axis=1)['from_shard'] = txs['from_addr'].apply(allocate.allocate) # from shard index
-        txs.loc(axis=1)['to_shard'] = txs['to_addr'].apply(allocate.allocate) # to shard index
+        txs['from_shard'] = txs['from_addr'].map(allocate.allocate) # from shard index
+        txs['to_shard'] = txs['to_addr'].map(allocate.allocate) # to shard index
 
         counts = (txs['from_shard'] == txs['to_shard']).value_counts()
         self.n_inner_tx += counts.get(True, default=0)
@@ -699,17 +832,15 @@ class Eth2v5(Eth2v3):
         # start simulation
         for slot_ptx in range(0, len(txs), tx_count):
             # in each time slot, tx_rate new transactions arrived
-            slot_txs = txs.iloc(axis=0)[slot_ptx: min(slot_ptx+tx_count, len(txs))]
+            slot_txs = txs.iloc[slot_ptx: min(slot_ptx+tx_count, len(txs))]
             for from_shard, tx in slot_txs.groupby('from_shard'):
                 #txs store in tuple: (from_addr, to_addr, from_shard, to_shard)
                 stx_pool[from_shard].extend(tx.itertuples(index=False, name=None))
             # each shard produce one block
             for shard, (tx_pool, tx_forward) in enumerate(zip(stx_pool, stx_forward)):
-                block_txs = deque()
                 n_forward = min(len(tx_forward), tx_per_block)
-                block_txs.extend(tx_forward.popleft() for _ in range(n_forward))
-                n_pool = min(len(tx_pool), tx_per_block-len(block_txs))
-                block_txs.extend(tx_pool.popleft() for _ in range(n_pool))
+                n_pool = min(len(tx_pool), tx_per_block-n_forward)
+                block_txs = [tx_forward.popleft() for _ in range(n_forward)]+[tx_pool.popleft() for _ in range(n_pool)]
                 self.sblock[shard].append(block_txs)
             # cross shard tx forward to target shard in next timeslot
             for shard, blocks in enumerate(self.sblock):

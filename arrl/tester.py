@@ -39,8 +39,8 @@ class Tester:
         block_count = 0
         simulate_time = 0
         for i, tx in txs.iterrows():
-            s_from = allocate_strategy.allocate(tx['from'])
-            s_to = allocate_strategy.allocate(tx['to'])
+            s_from = allocate_strategy.allocate(tx['from_addr'])
+            s_to = allocate_strategy.allocate(tx['to_addr'])
             tx = {'id':tx_count, 's_from':s_from, 's_to':s_to, 'time':simulate_time}
             shard_tx_pool[tx['s_from']].append(tx)
             tx_count += 1

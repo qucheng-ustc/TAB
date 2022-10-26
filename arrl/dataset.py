@@ -14,9 +14,10 @@ class Dataset(DatasetBase):
         if loader is None:
             loader = arrl.dataloader.get_default_dataloader()
         self.loader = loader
-        self.blocks, self.txs = loader.load_data(start_time=start_time, end_time=end_time)
-        arrl.preprocess.drop_contract_creation_tx(self.txs)
-        arrl.preprocess.convert_address_to_int(self.txs, addr_len=16)
+        blocks, txs = loader.load_data(start_time=start_time, end_time=end_time)
+        arrl.preprocess.drop_contract_creation_tx(txs)
+        self.txs = pd.DataFrame({'from_addr':arrl.preprocess.convert_addr_to_int(txs['from'], addr_len=addr_len),
+                                 'to_addr':arrl.preprocess.convert_addr_to_int(txs['to'], addr_len=addr_len)})
 
 class RandomDataset(DatasetBase):
     def __init__(self, size, addr_len=16):
