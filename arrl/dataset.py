@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import arrl.dataloader
 import arrl.preprocess
+from utils import timeutil
 
 class DatasetBase:
     def __length__(self):
@@ -15,6 +16,7 @@ class Dataset(DatasetBase):
             loader = arrl.dataloader.get_default_dataloader()
         self.loader = loader
         blocks, txs = loader.load_data(start_time=start_time, end_time=end_time)
+        print(f'time range: {timeutil.strftime(blocks["timestamp"].iloc[0])}-{timeutil.strftime(blocks["timestamp"].iloc[-1])}')
         arrl.preprocess.drop_contract_creation_tx(txs)
         self.txs = pd.DataFrame({'from_addr':arrl.preprocess.convert_addr_to_int(txs['from'], addr_len=addr_len),
                                  'to_addr':arrl.preprocess.convert_addr_to_int(txs['to'], addr_len=addr_len)})

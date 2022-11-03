@@ -7,3 +7,5 @@ def set_gpu_options(visible_idxs=[0], memory_growth=True):
     for gpu in vgpus:
         tf.config.experimental.set_memory_growth(gpu, memory_growth)
 
+def set_random_seed(seed):
+    tf.random.set_seed(seed)

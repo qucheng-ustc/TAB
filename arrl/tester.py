@@ -1,12 +1,3 @@
-
-
-class AllocateStrategy:
-    def __init__(self, k):
-        self.k = k
-    
-    def allocate(self, account):
-        return 0
-    
 class Tester:
     def __init__(self, txs):
         self.txs = txs

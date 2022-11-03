@@ -53,7 +53,7 @@ class GroupAllocateStrategy(AllocateStrategy):
     def apply(self, action):
         if action is None:
             return
-        # action: a list [s0, s1, s2, ... ,sm], si indicates shard id of group i
+        # action: a list [s_0, s_1, s_2, ... ,s_m], m: 1<<g, s_i: shard id of group i
         assert(len(action)==len(self.group_table))
         self.group_table = action
 
