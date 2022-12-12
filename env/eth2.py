@@ -4,10 +4,12 @@ import numpy as np
 import itertools
 
 class Eth2(gym.Env):
-    def __init__(self):
+    def __init__(self, config=None):
         self.tx_rate = 1000
         self.tx_per_block = 200
         self.block_interval = 15
+        if config is not None:
+            self.config(**config)
 
     def init(self, txs, allocate, **kwargs):
         self.txs = txs
@@ -195,8 +197,8 @@ class Eth2v1(Eth2):
 class Eth2v2(Eth2):
     #params: 
     #  n_blocks: number of blocks per step
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)
         self.n_blocks = 10
 
     def step(self, action=None):
@@ -457,9 +459,40 @@ class Eth2v302(Eth2v2):
 
         return observation, None, 0, None
 
+from gym.spaces import Discrete, Box, Dict
+
 class Eth2v3(Eth2v2):
     #params: 
     #  n_blocks: number of blocks per step
+    def __init__(self, config={}):
+        self.tx_rate = config.get("tx_rate",1000)
+        self.tx_per_block = config.get("tx_per_block",200)
+        self.block_interval = config.get("block_interval",15)
+        self.n_blocks = config.get("n_blocks",10)
+        self.addr_len = config.get("addr_len", 16)
+        if "txs" in config:
+            self.txs = config.get("txs")
+        else:
+            from arrl.dataset import RandomDataset
+            self.txs = RandomDataset(size=10000000).txs
+        if "allocate" in config:
+            self.allocate = config.get("allocate")
+            self.k = self.allocate.k
+            self.g = self.allocate.g
+        else:
+            from strategy import GroupAllocateStrategy
+            self.k = config.get("k",6)
+            self.g = config.get("g",7)
+            self.allocate = GroupAllocateStrategy(self.k,self.g)
+        self.n_shards = 1<<self.k
+        self.n_accounts = 1<<self.g
+        self.action_space = Discrete(self.n_shards)
+        self.observation_space = Dict({
+            'adj_matrix':Box(low=0.0,high=1.0,shape=(self.n_accounts,self.n_accounts)), # adjacency matrix (weighted by number of tx)
+            'degree':Box(low=0.0,high=1.0,shape=(self.n_accounts,)), # account degree (number of tx)
+            'feature':Box(low=0.0,high=1.0,shape=(self.n_accounts,)), # account feature (total gas)
+            'partition':Box(low=0.0,high=1.0,shape=(self.n_accounts,self.n_shards))}) # last partition
+
     def reset(self):
         self.ptx = 0
         self.n_cross_tx = 0
@@ -503,7 +536,7 @@ class Eth2v3(Eth2v2):
         stx_pool = self.stx_pool
         stx_forward = self.stx_forward
         for from_shard, tx in txs.groupby('from_shard'):
-            #txs store in tuple: (from_addr, to_addr, from_shard, to_shard)
+            #txs store in tuple: (from_addr, to_addr, gas, from_shard, to_shard)
             stx_pool[from_shard].extend(tx.itertuples(index=False, name=None))
 
         for _ in range(n_blocks):
@@ -514,7 +547,7 @@ class Eth2v3(Eth2v2):
                 self.sblock[shard].append(block_txs)
             for shard, blocks in enumerate(self.sblock):
                 for tx in blocks[-1]:
-                    to_shard = tx[3]
+                    to_shard = tx[4]
                     if to_shard!=shard:
                         stx_forward[to_shard].append(tx)
 
@@ -533,7 +566,7 @@ class Eth2v3(Eth2v2):
             n_block += len(blocks)
             for block in blocks:
                 n_block_tx += len(block)
-                for _, _, from_shard, to_shard in block:
+                for _, _, _, from_shard, to_shard in block:
                     if to_shard!=shard:
                         n_block_out_tx += 1
                     elif from_shard==shard:
@@ -818,14 +851,14 @@ class Eth2v5(Eth2v3):
         stx_pool = [deque() for i in range(self.n_shards)]
         stx_forward = [deque() for i in range(self.n_shards)]
         for shard, (tx_pool, tx_forward) in enumerate(zip(self.stx_pool, self.stx_forward)):
-            for from_addr, to_addr, _, _ in tx_pool:
+            for from_addr, to_addr, gas, _, _ in tx_pool:
                 from_shard = allocate.allocate(from_addr)
                 to_shard = allocate.allocate(to_addr)
-                stx_pool[from_shard].append((from_addr, to_addr, from_shard, to_shard))
-            for from_addr, to_addr, _, _ in tx_forward:
+                stx_pool[from_shard].append((from_addr, to_addr, gas, from_shard, to_shard))
+            for from_addr, to_addr, gas, _, _ in tx_forward:
                 from_shard = allocate.allocate(from_addr)
                 to_shard = allocate.allocate(to_addr)
-                stx_forward[to_shard].append((from_addr, to_addr, from_shard, to_shard))
+                stx_forward[to_shard].append((from_addr, to_addr, gas, from_shard, to_shard))
         self.stx_pool = stx_pool
         self.stx_forward = stx_forward
 
@@ -834,7 +867,7 @@ class Eth2v5(Eth2v3):
             # in each time slot, tx_rate new transactions arrived
             slot_txs = txs.iloc[slot_ptx: min(slot_ptx+tx_count, len(txs))]
             for from_shard, tx in slot_txs.groupby('from_shard'):
-                #txs store in tuple: (from_addr, to_addr, from_shard, to_shard)
+                #txs store in tuple: (from_addr, to_addr, gas, from_shard, to_shard)
                 stx_pool[from_shard].extend(tx.itertuples(index=False, name=None))
             # each shard produce one block
             for shard, (tx_pool, tx_forward) in enumerate(zip(stx_pool, stx_forward)):
@@ -845,7 +878,7 @@ class Eth2v5(Eth2v3):
             # cross shard tx forward to target shard in next timeslot
             for shard, blocks in enumerate(self.sblock):
                 for tx in blocks[-1]:
-                    to_shard = tx[3]
+                    to_shard = tx[4]
                     if to_shard!=shard:
                         stx_forward[to_shard].append(tx)
             self.simulate_time += block_interval

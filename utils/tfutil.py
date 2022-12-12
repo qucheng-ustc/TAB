@@ -1,4 +1,5 @@
 import tensorflow as tf
+tf.compat.v1.enable_eager_execution()
 
 def set_gpu_options(visible_idxs=[0], memory_growth=True):
     gpus = tf.config.experimental.list_physical_devices(device_type='GPU')

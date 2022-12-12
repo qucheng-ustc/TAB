@@ -34,7 +34,10 @@ class RandomAllocateStrategy(AllocateStrategy):
         self.mask = (1<<addr_len)-1
 
     def apply(self, action):
-        self.salt = np.random.randint(1<<self.addr_len)
+        if isinstance(action, int):
+            self.salt = action
+        else:
+            self.salt = np.random.randint(1<<self.addr_len)
 
     def allocate(self, addr):
         return (((addr^self.salt)*self.multiplier)&self.mask) >> self.shift

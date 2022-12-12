@@ -19,9 +19,11 @@ class Dataset(DatasetBase):
         print(f'time range: {timeutil.strftime(blocks["timestamp"].iloc[0])}-{timeutil.strftime(blocks["timestamp"].iloc[-1])}')
         arrl.preprocess.drop_contract_creation_tx(txs)
         self.txs = pd.DataFrame({'from_addr':arrl.preprocess.convert_addr_to_int(txs['from'], addr_len=addr_len),
-                                 'to_addr':arrl.preprocess.convert_addr_to_int(txs['to'], addr_len=addr_len)})
+                                 'to_addr':arrl.preprocess.convert_addr_to_int(txs['to'], addr_len=addr_len),
+                                 'gas':txs['gas']})
 
 class RandomDataset(DatasetBase):
     def __init__(self, size, addr_len=16):
         self.txs = pd.DataFrame({'from_addr':np.random.randint(1<<addr_len, size=size),
-                                 'to_addr':  np.random.randint(1<<addr_len, size=size)})
+                                 'to_addr':np.random.randint(1<<addr_len, size=size),
+                                 'gas':np.random.randint(1000, size=size)})
