@@ -47,9 +47,10 @@ class Eth2v1(gym.Env):
         self.stx_forward = [deque() for _ in range(self.n_shards)]
         self.sblock = [deque() for _ in range(self.n_shards)]
 
-        observation = [self.stx_pool, self.stx_forward, self.sblock]
+        observation = self.observation()
+        reward = self.reward()
 
-        return observation, None, 0, None
+        return observation, reward, 0, None
 
     def step(self, action=None):
         # one step contains n_blocks blocks
@@ -94,9 +95,15 @@ class Eth2v1(gym.Env):
                     if to_shard!=shard:
                         stx_forward[to_shard].append(tx)
 
-        observation = [self.stx_pool, self.stx_forward, self.sblock]
-        reward = 0
+        observation = self.observation()
+        reward = self.reward()
         return observation, reward, done, None
+
+    def observation(self):
+        pass
+
+    def reward(self):
+        pass
 
     def info(self):
         n_block = 0
