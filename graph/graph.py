@@ -12,6 +12,7 @@ class Graph:
         print('Vertex:', self.n_vertex)
         self.nexts = dict()
         self.weights = dict()
+        self.v_weights = np.zeros(shape=self.n_vertex, dtype=np.int)
         txs = txs[['from','to']]
         for index, addr_from, addr_to in txs.itertuples():
             v_from = self.vertex_idx.get_loc(addr_from)
@@ -30,20 +31,24 @@ class Graph:
                     self.nexts[v_to].append(v_from)
                 else:
                     self.nexts[v_to] = [v_from]
+            self.v_weights[v_from] += 1
+            self.v_weights[v_to] += 1
         self.n_edge = len(self.weights)
         print('Edge:', self.n_edge)
         print('Max weight:', max(self.weights.values()), 'Min weight:', min(self.weights.values()))
+        print('Max v_weight:', max(self.v_weights), 'Min v_weight:', min(self.v_weights))
 
     def save(self, path):
         with open(path, 'w') as f:
-            f.write(f'{self.n_vertex} {self.n_edge} 001\n')
+            f.write(f'{self.n_vertex} {self.n_edge} 011\n')
             for v in range(self.n_vertex):
+                f.write(f'{self.v_weights[v]}')
                 for v_next in self.nexts.get(v, []):
                     if v < v_next:
                         v_from, v_to = v, v_next
                     else:
                         v_from, v_to = v_next, v
                     weight = self.weights[(v_from, v_to)]
-                    f.write(f'{v_next+1} {weight} ')
+                    f.write(f' {v_next+1} {weight}')
                 f.write('\n')
 
