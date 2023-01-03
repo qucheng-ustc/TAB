@@ -7,3 +7,6 @@ __pycache__
 *.csv
 *.egg
 *.egg-info
+*.pyc
+*.tar
+*.gz
