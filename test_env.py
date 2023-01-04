@@ -8,7 +8,7 @@ if __name__=='__main__':
 
     _, _, done, _ = env.reset()
     while not done:
-        observation, reward, done, _ = env.step()
+        observation, reward, done, _ = env.step(None)
     print(env.info())
 
 

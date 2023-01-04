@@ -1,5 +1,6 @@
 import numpy as np
 
+#allocate to 1<<k shards based on int address
 class AllocateStrategy:
     def __init__(self, k, addr_len=16):
         # 2^k shards
@@ -60,6 +61,9 @@ class GroupAllocateStrategy(AllocateStrategy):
         assert(len(action)==len(self.group_table))
         self.group_table = action
 
+    def group(self, addr):
+        return addr >> self.shift
+
     def allocate(self, addr):
-        return self.group_table[addr >> self.shift]
+        return self.group_table[self.group(addr)]
 
