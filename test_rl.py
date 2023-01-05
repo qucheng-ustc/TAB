@@ -13,8 +13,6 @@ register_env("eth2-v1", lambda config: Eth2v1(config))
 
 if __name__=='__main__':
     dataset = Dataset(start_time='2021-08-01 00:00:00')
-    print('Check env:')
-    ray.rllib.utils.check_env(Eth2v1(config=dict(txs=dataset.txs, allocate=GroupAllocateStrategy(6,7), n_blocks=10, tx_rate=500, tx_per_block=200, block_interval=15)))
 
     # Configure the algorithm.
     config = {
@@ -46,6 +44,7 @@ if __name__=='__main__':
         # Only for evaluation runs, render the env.
         "evaluation_config": {
             "render_env": False,
+            "evaluation_interval": 1
         },
     }
 
@@ -61,3 +60,14 @@ if __name__=='__main__':
     # Evaluate the trained Trainer (and render each timestep to the shell's
     # output).
     algo.evaluate()
+
+    env = Eth2v1(config=config['env_config'])
+    obs = env.reset()
+    done = 0
+    while not done:
+        action = algo.compute_single_action(
+            observation=obs,
+            explore=False
+        )
+        obs, reward, done, _ = env.step(action)
+    print(env.info())
