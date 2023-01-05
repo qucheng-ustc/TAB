@@ -242,7 +242,7 @@ class Eth2v1(gym.Env):
         self.adj_matrix = np.zeros(shape=(self.n_accounts,self.n_accounts))
         self.degree = np.zeros(shape=self.n_accounts)
         self.feature = np.zeros(shape=self.n_accounts)
-        self.reward = 0
+        n_block_out_tx, n_block_inner_tx, n_block_forward_tx = 0, 0, 0
         for shard, blocks in enumerate(self.simulator.sblock):
             n_blocks = min(len(blocks),self.n_blocks)
             for block in blocks[-n_blocks:]:
@@ -253,6 +253,15 @@ class Eth2v1(gym.Env):
                     self.degree[from_group] += 1
                     self.degree[to_group] += 1
                     self.feature[from_group] += gas
+                    if to_shard!=shard:
+                        n_block_out_tx += 1
+                    elif from_shard==shard:
+                        n_block_inner_tx += 1
+                    else:
+                        n_block_forward_tx += 1
+        target_throughput = self.tx_per_block*self.n_shards/self.block_interval
+        actual_throughput = (n_block_inner_tx+n_block_forward_tx)/self.simulator.simulate_time
+        self.reward = float(actual_throughput)/target_throughput
         return self.observation(), self.reward, self.done, {}
 
     def observation(self):
