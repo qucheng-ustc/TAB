@@ -28,4 +28,3 @@ class Partition:
         else:
             edgecuts, parts = metis.part_graph(self.metis_graph, nparts=nparts)
         return parts
-

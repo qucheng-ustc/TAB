@@ -204,6 +204,9 @@ class Eth2v1(gym.Env):
         else:
             from arrl.dataset import RandomDataset
             self.txs = RandomDataset(size=10000000).txs
+        if isinstance(self.txs, str):
+            from arrl.dataset import Dataset, RandomDataset
+            self.txs = eval(self.txs)
         if "allocate" in config:
             self.allocate = config.get("allocate")
             self.k = self.allocate.k
@@ -234,6 +237,7 @@ class Eth2v1(gym.Env):
         self.degree = np.ones(shape=self.n_accounts)
         self.feature = np.zeros(shape=self.n_accounts)
         self.reward = 0
+        self.target_throughput = self.tx_per_block*self.n_shards/self.block_interval
         return self.observation()
 
     def step(self, action):
@@ -259,9 +263,8 @@ class Eth2v1(gym.Env):
                         n_block_inner_tx += 1
                     else:
                         n_block_forward_tx += 1
-        target_throughput = self.tx_per_block*self.n_shards/self.block_interval
         actual_throughput = (n_block_inner_tx+n_block_forward_tx)/self.simulator.simulate_time
-        self.reward = float(actual_throughput)/target_throughput
+        self.reward = float(actual_throughput)/self.target_throughput
         return self.observation(), self.reward, self.done, {}
 
     def observation(self):

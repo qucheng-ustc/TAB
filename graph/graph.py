@@ -12,7 +12,7 @@ class Graph:
         print('Vertex:', self.n_vertex)
         self.nexts = dict()
         self.weights = dict()
-        self.v_weights = np.zeros(shape=self.n_vertex, dtype=np.int)
+        self.v_weights = np.zeros(shape=self.n_vertex, dtype=int)
         txs = txs[['from','to']]
         for index, addr_from, addr_to in txs.itertuples():
             v_from = self.vertex_idx.get_loc(addr_from)
@@ -52,3 +52,36 @@ class Graph:
                     f.write(f' {v_next+1} {weight}')
                 f.write('\n')
 
+class GroupGraph(Graph):
+    def __init__(self, txs, g=7, addr_len=16):
+        self.txs = txs
+        self.n_vertex = 1<<g
+        print('Vertex:', self.n_vertex)
+        self.nexts = dict()
+        self.weights = dict()
+        self.v_weights = np.zeros(shape=self.n_vertex, dtype=int)
+        self.shift = addr_len - g
+        txs = txs[['from_addr','to_addr']]
+        for index, addr_from, addr_to in txs.itertuples():
+            v_from = addr_from >> self.shift
+            v_to = addr_to >> self.shift
+            if v_from > v_to:
+                v_from, v_to = v_to, v_from
+            if (v_from, v_to) in self.weights:
+                self.weights[(v_from,v_to)] += 1
+            else:
+                self.weights[(v_from,v_to)] = 1
+                if v_from in self.nexts:
+                    self.nexts[v_from].append(v_to)
+                else:
+                    self.nexts[v_from] = [v_to]
+                if v_to in self.nexts:
+                    self.nexts[v_to].append(v_from)
+                else:
+                    self.nexts[v_to] = [v_from]
+            self.v_weights[v_from] += 1
+            self.v_weights[v_to] += 1
+        self.n_edge = len(self.weights)
+        print('Edge:', self.n_edge)
+        print('Max weight:', max(self.weights.values()), 'Min weight:', min(self.weights.values()))
+        print('Max v_weight:', max(self.v_weights), 'Min v_weight:', min(self.v_weights))
