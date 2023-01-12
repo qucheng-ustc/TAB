@@ -62,9 +62,14 @@ class GroupGraph(Graph):
         self.v_weights = np.zeros(shape=self.n_vertex, dtype=int)
         self.shift = addr_len - g
         txs = txs[['from_addr','to_addr']]
+        self.addr_group = {}
         for index, addr_from, addr_to in txs.itertuples():
             v_from = addr_from >> self.shift
             v_to = addr_to >> self.shift
+            if addr_from not in self.addr_group:
+                self.addr_group[addr_from] = v_from
+            if addr_to not in self.addr_group:
+                self.addr_group[addr_to] = v_to
             if v_from > v_to:
                 v_from, v_to = v_to, v_from
             if (v_from, v_to) in self.weights:
@@ -85,3 +90,8 @@ class GroupGraph(Graph):
         print('Edge:', self.n_edge)
         print('Max weight:', max(self.weights.values()), 'Min weight:', min(self.weights.values()))
         print('Max v_weight:', max(self.v_weights), 'Min v_weight:', min(self.v_weights))
+
+class PopularGroupGraph(Graph):
+    def __init__(self, txs, n_groups):
+        self.txs = txs
+          
