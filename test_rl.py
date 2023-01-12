@@ -1,6 +1,6 @@
 # Import the RL algorithm (Algorithm) we would like to use.
 import ray
-from ray.rllib.algorithms.dqn import DQN
+from ray.rllib.algorithms.pg import PG
 from env import Eth2v1
 from arrl.dataset import Dataset
 from strategy import GroupAllocateStrategy
@@ -51,7 +51,7 @@ if __name__=='__main__':
     }
 
     # Create our RLlib Trainer.
-    algo = PPO(config=config)
+    algo = PG(config=config)
 
     # Run it for n training iterations. A training iteration includes
     # parallel sample collection by the environment workers as well as
