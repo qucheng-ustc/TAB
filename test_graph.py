@@ -8,8 +8,8 @@ from env.eth2 import Eth2v1Simulator, Eth2v1
 
 if __name__=='__main__':
     k = 3
-    g = 16
-    addr_len = 7
+    g = 7
+    addr_len = 16
     n_shards = 1 << k
     tx_rate = 100
     skip_account_partition = True

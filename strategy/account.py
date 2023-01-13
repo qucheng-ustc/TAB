@@ -36,7 +36,7 @@ class PartitionAccountAllocate(AccountAllocate):
             self.account_idx = pd.Index(self.account_idx)
 
     def allocate(self, addr):
-        idx = self.account_idx.get_loc(addr)
+        idx = self.account_idx.get_indexer([addr])[0]
         if idx>=0:
             return self.part[idx]
         else:
@@ -45,5 +45,3 @@ class PartitionAccountAllocate(AccountAllocate):
                 return self.fallback.allocate(addr)
             else:
                 return -1
-
-
