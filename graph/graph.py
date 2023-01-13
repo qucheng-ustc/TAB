@@ -107,11 +107,12 @@ class PopularGroupGraph(Graph):
         # resolve groups, all vertexes directly connected to popular addr
         self.addr_group = {}
         self.addr_weight = {}
-        topn_v_set = set(topn_v.values)
         for group_idx, addr in enumerate(topn_v):
             raw_v = self.raw.vertex_idx.get_loc(addr)
             for raw_v_next in self.raw.nexts.get(raw_v, []):
                 addr = self.raw.vertex_idx[raw_v_next]
+                if addr in topn_v:
+                    continue
                 weight = self.raw.weights[(min(raw_v, raw_v_next), max(raw_v, raw_v_next))]
                 if addr not in self.addr_group:
                     self.addr_group[addr] = group_idx
@@ -121,6 +122,7 @@ class PopularGroupGraph(Graph):
                     self.addr_weight[addr] = weight
         print("Groups:", len(self.addr_group))
         print("Max weight:", max(self.addr_weight.values()), " Min weight:", min(self.addr_weight.values()), " Avg weight:", np.average(list(self.addr_weight.values())))
+        print("Total weight sum:", sum(self.raw.weights.values()), " Group weight sum:", sum(self.addr_weight.values()), " Proportion:", 1.0*sum(self.addr_weight.values())/sum(self.raw.weights.values()))
         # construct group graph
         self.vertex_idx = topn_v
         self.nexts = dict()
@@ -160,3 +162,5 @@ class PopularGroupGraph(Graph):
         print('Max weight:', max(self.weights.values()), ' Min weight:', min(self.weights.values()), ' Avg weight:', np.average(list(self.weights.values())))
         print('Max v_weight:', max(self.v_weights), ' Min v_weight:', min(self.v_weights), 'Avg v_weight:', np.average(self.v_weights))
         print('Total v_weights:', sum(self.v_weights))
+        self.addr_group.update({v:i for i,v in enumerate(topn_v.values)})
+        print("All grouped addrs:", len(self.addr_group))
