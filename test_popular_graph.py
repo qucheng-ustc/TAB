@@ -8,7 +8,7 @@ from env.eth2 import Eth2v1Simulator
 
 if __name__=='__main__':
     k = 3
-    g = 7
+    g = 10
     n_groups = 1 << g
     n_shards = 1 << k
     tx_rate = 100
