@@ -24,10 +24,8 @@ if __name__=='__main__':
     partition = Partition(graph_path)
     parts = partition.partition(n_shards)
     print('Parts:', len(parts))
-    txs['from_addr'] = txs['from']
-    txs['to_addr'] = txs['to']
     allocator = PartitionAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
-    simulator = Eth2v1Simulator(txs=txs[['from_addr','to_addr','gas']], allocate=allocator, n_shards=n_shards, tx_rate=tx_rate)
+    simulator = Eth2v1Simulator(txs=txs[['from','to','gas']], allocate=allocator, n_shards=n_shards, tx_rate=tx_rate)
     account_list = pd.Index(graph.addr_group.keys())
     account_parts = [parts[graph.addr_group[addr]] for addr in account_list]
     print("Account list:", len(account_list))
