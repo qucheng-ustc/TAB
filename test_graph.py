@@ -3,7 +3,7 @@ import pandas as pd
 from tqdm import tqdm
 from arrl.dataloader import get_default_dataloader
 from arrl.preprocess import drop_contract_creation_tx, convert_tx_addr
-from graph.graph import Graph, GroupGraph, PopularGroupGraph
+from graph.graph import Graph, GroupGraph, PopularGroupGraph, CoarsenGraph
 from graph.partition import Partition
 from strategy.account import StaticAccountAllocate, PartitionAccountAllocate
 from strategy.allocate import GroupAllocateStrategy
@@ -128,6 +128,24 @@ def test_popular_graph(txs, n_shards, n_groups, tx_rate):
         account_parts = [parts[graph.addr_group[addr]] for addr in account_list]
     print(simulator.info())
 
+def test_coarsen_graph(txs, n_shards, n_groups, tx_rate):
+    print('Coarsen Graph:')
+    graph_path = './metis/graphs/test_coarsen_graph.txt'
+    allocator = PartitionAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
+    simulator = Eth2v1Simulator(txs=txs[['from','to','gas']], allocate=allocator, n_shards=n_shards, tx_rate=tx_rate)
+
+    print("Partition with all txs:")
+    graph = CoarsenGraph(txs, n_groups, debug=True).save(graph_path)
+    parts = Partition(graph_path).partition(n_shards, debug=True)
+    print('Parts:', len(parts))
+    account_list = graph.vertex_idx
+    account_parts = [parts[graph.rv_map[i]] for i in range(len(account_list))]
+    print("Account list:", len(account_list))
+    simulator.reset()
+    for _ in tqdm(range(simulator.max_epochs)):
+        simulator.step((account_list, account_parts))
+    print(simulator.info())
+
 if __name__=='__main__':
     k = 3
     g = 7
@@ -142,7 +160,8 @@ if __name__=='__main__':
 
     func_dict = {'graph':lambda:test_graph(txs, n_shards=n_shards, tx_rate=tx_rate),
                  'group':lambda:test_group_graph(txs, k=k, g=g, addr_len=addr_len, tx_rate=tx_rate),
-                 'popular':lambda:test_popular_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=tx_rate)}
+                 'popular':lambda:test_popular_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=tx_rate),
+                 'coarsen':lambda:test_coarsen_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=tx_rate)}
     exec_funcs = []
     if len(sys.argv) == 1:
         exec_funcs = func_dict.values()

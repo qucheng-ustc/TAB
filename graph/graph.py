@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+import collections
+import itertools
 
 class Graph:
     def __init__(self, txs, debug=False):
@@ -8,23 +10,26 @@ class Graph:
         vertex_idx_to = pd.Index(txs['to'].unique())
         if debug:
             print('Vertex from:', len(vertex_idx_from), 'Vertex to:', len(vertex_idx_to))
-        self.vertex_idx = vertex_idx_from.union(vertex_idx_to)
-        self.n_vertex = len(self.vertex_idx)
+        vertex_idx = vertex_idx_from.union(vertex_idx_to)
+        self._init(vertex_idx)
         if debug:
             print('Vertex:', self.n_vertex)
-        self.nexts = dict()
-        self.weights = dict()
-        self.v_weights = np.zeros(shape=self.n_vertex, dtype=int)
         txs = txs[['from','to']]
         for index, addr_from, addr_to in txs.itertuples():
             v_from = self.vertex_idx.get_loc(addr_from)
             v_to = self.vertex_idx.get_loc(addr_to)
             self._add_edge(v_from, v_to)
-        self.n_edge = len(self.weights)
         if debug:
             print('Edge:', self.n_edge)
             print('Max weight:', max(self.weights.values()), ' Min weight:', min(self.weights.values()), ' Avg weight:', np.average(list(self.weights.values())))
             print('Max v_weight:', max(self.v_weights), ' Min v_weight:', min(self.v_weights), 'Avg v_weight:', np.average(self.v_weights))
+    
+    def _init(self, vertex_idx):
+        self.vertex_idx = vertex_idx
+        self.n_vertex = len(self.vertex_idx)
+        self.nexts = dict()
+        self.weights = dict()
+        self.v_weights = np.zeros(shape=self.n_vertex, dtype=int)
         
     def _add_edge(self, v_from, v_to, weight=1):
         if v_from > v_to:
@@ -43,6 +48,7 @@ class Graph:
                 self.nexts[v_to] = [v_from]
         self.v_weights[v_from] += weight
         self.v_weights[v_to] += weight
+        self.n_edge = len(self.weights)
     
     def update(self, txs, debug=False):
         vertex_idx_from = pd.Index(txs['from'].unique())
@@ -59,7 +65,6 @@ class Graph:
             v_from = self.vertex_idx.get_loc(addr_from)
             v_to = self.vertex_idx.get_loc(addr_to)
             self._add_edge(v_from, v_to)
-        self.n_edge = len(self.weights)
         if debug:
             print('Updated edge:', self.n_edge)
             print('Max weight:', max(self.weights.values()), ' Min weight:', min(self.weights.values()), ' Avg weight:', np.average(list(self.weights.values())))
@@ -102,7 +107,6 @@ class GroupGraph(Graph):
             if addr_to not in self.addr_group:
                 self.addr_group[addr_to] = v_to
             self._add_edge(v_from, v_to)
-        self.n_edge = len(self.weights)
         if debug:
             print('Edge:', self.n_edge)
             print('Max weight:', max(self.weights.values()), ' Min weight:', min(self.weights.values()), ' Avg weight:', np.average(list(self.weights.values())))
@@ -115,7 +119,6 @@ class PopularGroupGraph(Graph):
             print("Popular group graph -- raw graph:")
         self.raw = Graph(txs, debug=debug)
         self.n_vertex = n_groups
-        txs = txs[['from','to']]
         # find top n_groups popular addrs
         raw_v_weights = pd.Series(self.raw.v_weights, index=self.raw.vertex_idx)
         topn_weights = raw_v_weights.nlargest(self.n_vertex)
@@ -164,7 +167,6 @@ class PopularGroupGraph(Graph):
                 if v == v_next:
                     continue
                 self._add_edge(v, v_next, weight)
-        self.n_edge = len(self.weights)
         self.addr_group.update({v:i for i,v in enumerate(topn_v.values)})
         if debug:
             print('Edge:', self.n_edge)
@@ -172,3 +174,87 @@ class PopularGroupGraph(Graph):
             print('Max v_weight:', max(self.v_weights), ' Min v_weight:', min(self.v_weights), 'Avg v_weight:', np.average(self.v_weights))
             print('Total v_weights:', sum(self.v_weights))
             print("All grouped addrs:", len(self.addr_group))
+
+class CGraph(Graph):
+    def __init__(self, raw, v_match):
+        self.n_vertex = len(v_match)
+        self.nexts = dict()
+        self.weights = dict()
+        self.v_weights = np.zeros(shape=self.n_vertex, dtype=int)
+        self.rv_map = {}
+        for i, (rvp, rvq) in enumerate(v_match.items()):
+            self.rv_map[rvp] = i
+            self.rv_map[rvq] = i
+        for rvp, rvq in v_match.items():
+            v = self.rv_map[rvp]
+            rv_from, rv_to = min(rvp, rvq), max(rvp,rvq)
+            if (rv_from, rv_to) in raw.weights:
+                self.v_weights[v] += raw.weights[(rv_from, rv_to)]
+            for rv_next in raw.nexts.get(rv_from, []):
+                weight = raw.weights[min(rv_from,rv_next),max(rv_from,rv_next)]
+                self._add_edge(v, self.rv_map[rv_next], weight)
+            for rv_next in raw.nexts.get(rv_to, []):
+                weight = raw.weights[min(rv_to,rv_next),max(rv_to,rv_next)]
+                self._add_edge(v, self.rv_map[rv_next], weight)
+
+class CoarsenGraph(Graph):
+    def __init__(self, txs, n_vertex, debug=False):
+        self.txs = txs
+        if debug:
+            print("Coarsen graph -- raw graph:")
+        self.raw = Graph(txs, debug=debug)
+        # merge vertexes until n_vertex
+        self.vertex_idx = self.raw.vertex_idx
+        self.rv_map = np.arange(self.raw.n_vertex)
+        cgraph = self.raw
+        level = 0
+        while cgraph.n_vertex > n_vertex:
+            level += 1
+            # match vertexes by its v_weights in ascending order
+            v_match = {}
+            matched = set()
+            sort_v = cgraph.v_weights.argsort()
+            i_unmatched = 0
+            for i, v in enumerate(sort_v):
+                # if already matched, skip
+                if v in matched:
+                    continue
+                max_v = v # default match with itself
+                cnexts = cgraph.nexts.get(v, [])
+                # deal with island vertex, match it with an unmatched vertex
+                if len(cnexts)==0:
+                    i_unmatched = max(i, i_unmatched)+1
+                    for i_unmatched in range(i_unmatched, len(sort_v)):
+                        v_unmatched = sort_v[i_unmatched]
+                        if v_unmatched not in matched:
+                            max_v = v_unmatched
+                            break
+                else:
+                    # match vertexes by heavy edge, match with itself if no match found
+                    max_weight = -1
+                    for v_next in cnexts:
+                        if v_next in matched:
+                            continue
+                        weight = cgraph.weights[(min(v, v_next), max(v, v_next))]
+                        if weight > max_weight:
+                            max_weight = weight
+                            max_v = v_next
+                v_match[v] = max_v
+                matched.add(v)
+                matched.add(max_v)
+            # create coarsen graph
+            cgraph = CGraph(cgraph, v_match)
+            for rv, vc in enumerate(self.rv_map):
+                self.rv_map[rv] = cgraph.rv_map[vc]
+            if debug:
+                print("Match level:", level, " Vertex:", cgraph.n_vertex)
+        self.n_vertex = cgraph.n_vertex
+        self.nexts = cgraph.nexts
+        self.weights = cgraph.weights
+        self.v_weights = cgraph.v_weights
+        self.n_edge = cgraph.n_edge
+        if debug:
+            print('Vertex:', self.n_vertex, ' Edge:', self.n_edge)
+            print('Max weight:', max(self.weights.values()), ' Min weight:', min(self.weights.values()), ' Avg weight:', np.average(list(self.weights.values())))
+            print('Max v_weight:', max(self.v_weights), ' Min v_weight:', min(self.v_weights), 'Avg v_weight:', np.average(self.v_weights))
+            print('Total v_weights:', sum(self.v_weights))
