@@ -31,7 +31,7 @@ class Graph:
         self.weights = dict()
         self.v_weights = np.zeros(shape=self.n_vertex, dtype=int)
         
-    def _add_edge(self, v_from, v_to, weight=1):
+    def _add_edge(self, v_from, v_to, weight=1, v_weight=True):
         if v_from > v_to:
             v_from, v_to = v_to, v_from
         if (v_from, v_to) in self.weights:
@@ -46,8 +46,9 @@ class Graph:
                 self.nexts[v_to].append(v_from)
             else:
                 self.nexts[v_to] = [v_from]
-        self.v_weights[v_from] += weight
-        self.v_weights[v_to] += weight
+        if v_weight:
+            self.v_weights[v_from] += weight
+            self.v_weights[v_to] += weight
         self.n_edge = len(self.weights)
     
     def update(self, txs, debug=False):
@@ -188,14 +189,15 @@ class CGraph(Graph):
         for rvp, rvq in v_match.items():
             v = self.rv_map[rvp]
             rv_from, rv_to = min(rvp, rvq), max(rvp,rvq)
+            self.v_weights[v] = raw.v_weights[rv_from] + raw.v_weights[rv_to]
             if (rv_from, rv_to) in raw.weights:
-                self.v_weights[v] += raw.weights[(rv_from, rv_to)]
+                self.v_weights[v] -= raw.weights[(rv_from, rv_to)]
             for rv_next in raw.nexts.get(rv_from, []):
                 weight = raw.weights[min(rv_from,rv_next),max(rv_from,rv_next)]
-                self._add_edge(v, self.rv_map[rv_next], weight)
+                self._add_edge(v, self.rv_map[rv_next], weight, v_weight=False)
             for rv_next in raw.nexts.get(rv_to, []):
                 weight = raw.weights[min(rv_to,rv_next),max(rv_to,rv_next)]
-                self._add_edge(v, self.rv_map[rv_next], weight)
+                self._add_edge(v, self.rv_map[rv_next], weight, v_weight=False)
 
 class CoarsenGraph(Graph):
     def __init__(self, txs, n_vertex, debug=False):
@@ -212,42 +214,74 @@ class CoarsenGraph(Graph):
             level += 1
             # match vertexes by its v_weights in ascending order
             v_match = {}
-            matched = set()
             sort_v = cgraph.v_weights.argsort()
+            matched = np.zeros(shape=len(sort_v), dtype=bool)
             i_unmatched = 0
+            two_hop = list()
             for i, v in enumerate(sort_v):
                 # if already matched, skip
-                if v in matched:
+                if matched[v]:
                     continue
-                max_v = v # default match with itself
+                max_v = v
                 cnexts = cgraph.nexts.get(v, [])
                 # deal with island vertex, match it with an unmatched vertex
                 if len(cnexts)==0:
                     i_unmatched = max(i, i_unmatched)+1
                     for i_unmatched in range(i_unmatched, len(sort_v)):
                         v_unmatched = sort_v[i_unmatched]
-                        if v_unmatched not in matched:
+                        if not matched[v_unmatched]:
                             max_v = v_unmatched
                             break
                 else:
                     # match vertexes by heavy edge, match with itself if no match found
                     max_weight = -1
                     for v_next in cnexts:
-                        if v_next in matched:
+                        if matched[v_next]:
                             continue
                         weight = cgraph.weights[(min(v, v_next), max(v, v_next))]
                         if weight > max_weight:
                             max_weight = weight
                             max_v = v_next
-                v_match[v] = max_v
-                matched.add(v)
-                matched.add(max_v)
+                if max_v != v:
+                    v_match[v] = max_v
+                    matched[v] = 1
+                    matched[max_v] = 1
+                else:
+                    two_hop.append(v)
+            if debug:
+                print("Match level:", level, " Matched:", len(v_match), " Two hop:", len(two_hop))
+            # perform two hop matching
+            unmatched_i = np.full(shape=len(sort_v), fill_value=-1, dtype=int)
+            for v in two_hop:
+                if matched[v]:
+                    continue
+                match_v = v
+                for v_next in cgraph.nexts.get(v, []):
+                    next_nexts = cgraph.nexts.get(v_next, [])
+                    for i in range(unmatched_i[v_next]+1, len(next_nexts)):
+                        v_next_next = next_nexts[i]
+                        if v_next_next == v:
+                            continue
+                        if matched[v_next_next]:
+                            continue
+                        match_v = v_next_next
+                        break
+                    unmatched_i[v_next] = i
+                    if match_v != v:
+                        break
+                v_match[v] = match_v
+                matched[v] = 1
+                matched[match_v] = 1
+            # match rest vertexes with themselves
+            for v in sort_v:
+                if not matched[v]:
+                    v_match[v] = v
             # create coarsen graph
             cgraph = CGraph(cgraph, v_match)
             for rv, vc in enumerate(self.rv_map):
                 self.rv_map[rv] = cgraph.rv_map[vc]
             if debug:
-                print("Match level:", level, " Vertex:", cgraph.n_vertex)
+                print("Match level:", level, " Vertex before:", len(sort_v), " Vertex after:", cgraph.n_vertex)
         self.n_vertex = cgraph.n_vertex
         self.nexts = cgraph.nexts
         self.weights = cgraph.weights
