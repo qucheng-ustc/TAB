@@ -148,7 +148,7 @@ def test_coarsen_graph(txs, n_shards, n_groups, tx_rate):
 
 if __name__=='__main__':
     k = 3
-    g = 7
+    g = 8
     addr_len = 16
     n_shards = 1 << k
     n_groups = 1 << g
