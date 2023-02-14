@@ -123,6 +123,7 @@ class PopularGroupGraph(Graph):
             print("Popular group graph -- raw graph:")
         self.raw = Graph(txs, debug=debug)
         self.n_vertex = n_groups
+        self.n_edge = 0
         # find top n_groups popular addrs
         raw_v_weights = pd.Series(self.raw.v_weights, index=self.raw.vertex_idx)
         topn_weights = raw_v_weights.nlargest(self.n_vertex)
@@ -219,9 +220,9 @@ class CGraph(Graph):
                 self.v_weights[v] = raw.v_weights[rv]
             else:
                 self.v_weights[v] = raw.v_weights[rv] + raw.v_weights[rvm]
-                rv_from, rv_to = min(rv,rvm), max(rv,rvm)
-                if (rv_from, rv_to) in raw.weights:
-                    self.v_weights[v] -= raw.weights[(rv_from, rv_to)]
+                #rv_from, rv_to = min(rv,rvm), max(rv,rvm)
+                #if (rv_from, rv_to) in raw.weights:
+                    #self.v_weights[v] -= raw.weights[(rv_from, rv_to)]
             #print('rv pair:', rv, rvm, ' v:', v, ' v_weight:', self.v_weights[v])
             self._add_vertex_edge(v, rv, raw)
             if rv == rvm:
@@ -229,14 +230,28 @@ class CGraph(Graph):
             self._add_vertex_edge(v, rvm, raw)
 
 class CoarsenGraph(Graph):
+    @classmethod
+    def from_graph(cls, graph, n_vertex, debug=False):
+        self = cls.__new__(cls)
+        self.raw = graph
+        self.coarsen_to(n_vertex, debug=debug)
+        return self
+
     def __init__(self, txs, n_vertex, debug=False):
         self.txs = txs
         if debug:
             print("Coarsen graph -- raw graph:")
         self.raw = Graph(txs, debug=debug)
+        self.coarsen_to(n_vertex, debug=debug)
+
+    def coarsen_to(self, n_vertex, debug=False):
         # merge vertexes until n_vertex
+        self.target_n_vertex = n_vertex
         self.vertex_idx = self.raw.vertex_idx
         self.rv_map = np.arange(self.raw.n_vertex)
+        max_v_weight = 1.5*sum(self.raw.v_weights)/n_vertex # subgraph size constraint
+        if debug:
+            print('v_weight constraint:', max_v_weight)
         cgraph = self.raw
         level = 0
         while cgraph.n_vertex > n_vertex:
@@ -262,13 +277,13 @@ class CoarsenGraph(Graph):
                             max_v = v_unmatched
                             break
                 else:
-                    # match vertexes by heavy edge, match with itself if no match found
+                    # match vertexes by heavy edge
                     max_weight = -1
                     for v_next in cnexts:
                         if matched[v_next]>=0:
                             continue
                         weight = cgraph.weights[(min(v, v_next), max(v, v_next))]
-                        if weight > max_weight:
+                        if weight > max_weight and cgraph.v_weights[v]+cgraph.v_weights[v_next]<=max_v_weight:
                             max_weight = weight
                             max_v = v_next
                 if max_v != v:
@@ -293,6 +308,8 @@ class CoarsenGraph(Graph):
                         if v_next_next == v:
                             continue
                         if matched[v_next_next]>=0:
+                            continue
+                        if cgraph.v_weights[v] + cgraph.v_weights[v_next_next]>max_v_weight:
                             continue
                         match_v = v_next_next
                         break
@@ -323,3 +340,69 @@ class CoarsenGraph(Graph):
                 print('weight: max', max(self.weights.values()), ' min', min(self.weights.values()), ' avg', np.average(list(self.weights.values())), ' sum', sum(self.weights.values()))
             if self.n_vertex>0:
                 print('v_weight: max', max(self.v_weights), ' min', min(self.v_weights), ' avg', np.average(self.v_weights), ' sum', sum(self.v_weights))
+
+class ClusterGraph(Graph):
+    def __init__(self, txs, n_cluster, debug=False):
+        self.txs = txs
+        if debug:
+            print("Cluster graph -- raw graph:")
+        self.raw = Graph(txs, debug=debug)
+        self.cluster(n_cluster, debug=debug)
+
+    def cluster(self, n_cluster, debug=False):
+        # sort v_weights in descending order
+        sort_v_weights = pd.Series(self.raw.v_weights).sort_values(ascending=False)
+        sort_v = sort_v_weights.index
+        if debug:
+            print('sort_v_weights:', len(sort_v_weights), ' first', sort_v_weights.iloc[0], ' last', sort_v_weights.iloc[-1], ' avg', sort_v_weights.mean(), ' sum', sort_v_weights.sum())
+            print('sort_v:', len(sort_v), ' first', sort_v[0], ' last', sort_v[-1], ' min', min(sort_v), ' max', max(sort_v))
+        max_v_weight = 1.5*sum(self.raw.v_weights)/n_cluster # cluster size constraint
+        
+        # resolve groups, all vertexes directly connected to popular addr
+        self.addr_group = {}
+        self.addr_weight = {}
+        for group_idx, addr in enumerate(topn_v):
+            raw_v = self.raw.vertex_idx.get_loc(addr)
+            for raw_v_next in self.raw.nexts.get(raw_v, []):
+                addr = self.raw.vertex_idx[raw_v_next]
+                if addr in topn_v:
+                    continue
+                weight = self.raw.weights[(min(raw_v, raw_v_next), max(raw_v, raw_v_next))]
+                if addr not in self.addr_group:
+                    self.addr_group[addr] = group_idx
+                    self.addr_weight[addr] = weight
+                elif weight > self.addr_weight[addr]:
+                    self.addr_group[addr] = group_idx
+                    self.addr_weight[addr] = weight
+        if debug:
+            print("Groups:", len(self.addr_group))
+            print("Max weight:", max(self.addr_weight.values()), " Min weight:", min(self.addr_weight.values()), " Avg weight:", np.average(list(self.addr_weight.values())))
+            print("Total weight sum:", sum(self.raw.weights.values()), " Group weight sum:", sum(self.addr_weight.values()), " Proportion:", 1.0*sum(self.addr_weight.values())/sum(self.raw.weights.values()))
+        # construct group graph
+        self.vertex_idx = topn_v
+        self.nexts = dict()
+        self.weights = dict()
+        self.v_weights = np.zeros(shape=self.n_vertex, dtype=int)
+        for addr, weight in self.addr_weight.items():
+            self.v_weights[self.addr_group[addr]] += weight
+        if debug:
+            print('Popular Vertex:', self.n_vertex)
+            print("Max weight:", max(self.v_weights), " Min weight:", min(self.v_weights), " Avg weight:", np.average(self.v_weights))
+        for addr, v in self.addr_group.items():
+            raw_v = self.raw.vertex_idx.get_loc(addr)
+            for raw_v_next in self.raw.nexts.get(raw_v, []):
+                addr = self.raw.vertex_idx[raw_v_next]
+                weight = self.raw.weights[(min(raw_v, raw_v_next), max(raw_v, raw_v_next))]
+                if addr not in self.addr_group:
+                    continue
+                v_next = self.addr_group[addr]
+                if v == v_next:
+                    continue
+                self._add_edge(v, v_next, weight)
+        self.addr_group.update({v:i for i,v in enumerate(topn_v.values)})
+        if debug:
+            print('Edge:', self.n_edge)
+            print('Max weight:', max(self.weights.values()), ' Min weight:', min(self.weights.values()), ' Avg weight:', np.average(list(self.weights.values())))
+            print('Max v_weight:', max(self.v_weights), ' Min v_weight:', min(self.v_weights), 'Avg v_weight:', np.average(self.v_weights))
+            print('Total v_weights:', sum(self.v_weights))
+            print("All grouped addrs:", len(self.addr_group))
