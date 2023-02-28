@@ -1,4 +1,3 @@
-import sys
 import pandas as pd
 from tqdm import tqdm
 from arrl.dataloader import get_default_dataloader
@@ -116,7 +115,7 @@ def test_popular_graph(txs, n_shards, n_groups, tx_rate, method=['all', 'last', 
         graph = PopularGroupGraph(txs, n_groups, debug=True).save(graph_path)
         parts = Partition(graph_path).partition(n_shards, debug=True)
         print('Parts:', len(parts))
-        account_list = pd.Index(graph.addr_group.keys())
+        account_list = graph.vertex_idx
         account_parts = [parts[graph.addr_group[addr]] for addr in account_list]
         print("Account list:", len(account_list))
         simulator.reset()
@@ -133,7 +132,7 @@ def test_popular_graph(txs, n_shards, n_groups, tx_rate, method=['all', 'last', 
             simulator.step((account_list, account_parts))
             graph = PopularGroupGraph(simulator.txs[simulator.ptx:min(len(simulator.txs),simulator.ptx+simulator.epoch_tx_count)], n_groups).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
-            account_list = pd.Index(graph.addr_group.keys())
+            account_list = graph.vertex_idx
             account_parts = [parts[graph.addr_group[addr]] for addr in account_list]
         print(simulator.info())
 
@@ -146,7 +145,7 @@ def test_popular_graph(txs, n_shards, n_groups, tx_rate, method=['all', 'last', 
             simulator.step((account_list, account_parts))
             graph = PopularGroupGraph(simulator.epoch_txs, n_groups).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
-            account_list = pd.Index(graph.addr_group.keys())
+            account_list = graph.vertex_idx
             account_parts = [parts[graph.addr_group[addr]] for addr in account_list]
         print(simulator.info())
 
@@ -160,7 +159,7 @@ def test_popular_graph(txs, n_shards, n_groups, tx_rate, method=['all', 'last', 
                 simulator.step((account_list, account_parts))
                 graph = PopularGroupGraph(simulator.txs[max(0,simulator.ptx-past_step*simulator.epoch_tx_count):simulator.ptx], n_groups).save(graph_path)
                 parts = Partition(graph_path).partition(n_shards)
-                account_list = pd.Index(graph.addr_group.keys())
+                account_list = graph.vertex_idx
                 account_parts = [parts[graph.addr_group[addr]] for addr in account_list]
             print(simulator.info())
 

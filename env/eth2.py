@@ -137,8 +137,8 @@ class Eth2v2Simulator(Eth2v1Simulator):
         done = self.ptx >= len(self.txs)
 
         self.allocate.apply(action)
-        txs['from_shard'] = txs[self.from_col].map(allocate.allocate) # from shard index
-        txs['to_shard'] = txs[self.to_col].map(allocate.allocate) # to shard index
+        txs['from_shard'] = txs[self.from_col].map(self.allocate.allocate) # from shard index
+        txs['to_shard'] = txs[self.to_col].map(self.allocate.allocate) # to shard index
 
         counts = (txs['from_shard'] == txs['to_shard']).value_counts()
         self.n_inner_tx += counts.get(True, default=0)
@@ -149,12 +149,12 @@ class Eth2v2Simulator(Eth2v1Simulator):
         stx_forward = [deque() for i in range(self.n_shards)]
         for shard, (tx_pool, tx_forward) in enumerate(zip(self.stx_pool, self.stx_forward)):
             for from_addr, to_addr, gas, _, _ in tx_pool:
-                from_shard = allocate.allocate(from_addr)
-                to_shard = allocate.allocate(to_addr)
+                from_shard = self.allocate.allocate(from_addr)
+                to_shard = self.allocate.allocate(to_addr)
                 stx_pool[from_shard].append((from_addr, to_addr, gas, from_shard, to_shard))
             for from_addr, to_addr, gas, _, _ in tx_forward:
-                from_shard = allocate.allocate(from_addr)
-                to_shard = allocate.allocate(to_addr)
+                from_shard = self.allocate.allocate(from_addr)
+                to_shard = self.allocate.allocate(to_addr)
                 stx_forward[to_shard].append((from_addr, to_addr, gas, from_shard, to_shard))
         self.stx_pool = stx_pool
         self.stx_forward = stx_forward

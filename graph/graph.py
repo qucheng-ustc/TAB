@@ -173,6 +173,7 @@ class PopularGroupGraph(Graph):
                     continue
                 self._add_edge(v, v_next, weight)
         self.addr_group.update({v:i for i,v in enumerate(topn_v.values)})
+        self.vertex_idx = pd.Index(self.addr_group.keys())
         if debug:
             print('Edge:', self.n_edge)
             print('Max weight:', max(self.weights.values()), ' Min weight:', min(self.weights.values()), ' Avg weight:', np.average(list(self.weights.values())))
