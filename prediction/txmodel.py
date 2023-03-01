@@ -1,8 +1,12 @@
 import statsmodels
 
-
 class LinearModel:
-    pass
+    def __init__(self):
+        pass
+    def fit(self, data):
+        pass
+    def predict(self, x):
+        pass
 
 class ARIMAModel:
     pass
