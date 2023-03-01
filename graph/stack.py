@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from scipy.sparse import lil_matrix
+from scipy.sparse import lil_matrix, csr_matrix
 
 class GraphStack:
     def __init__(self, block_txs, debug=False):
@@ -16,7 +16,9 @@ class GraphStack:
         if debug:
             print('Vertex from:', len(vertex_idx_from), 'Vertex to:', len(vertex_idx_to))
             print('Vertex:', self.n_vertex)
-        self.n_edge = [0]*self.size
+        self.n_edge = 0
+        self.new_edges = [0]*self.size
+        self.layer_edges = [0]*self.size
         self.nexts = dict()
         self.weights = dict()
 
@@ -28,7 +30,7 @@ class GraphStack:
                 v_to = self.vertex_idx.get_loc(addr_to)
                 self._add_edge(l, v_from, v_to)
         if debug:
-            print('Edge:', self.n_edge, ' sum', sum(self.n_edge))
+            print('Edge:', self.n_edge, ', layer edges:', self.layer_edges, ', new edges:', self.new_edges, 'sum', sum(self.new_edges))
     
     def _add_edge(self, layer, v_from, v_to, weight=1):
         if v_from > v_to:
@@ -43,5 +45,17 @@ class GraphStack:
                 self.nexts[v_to].append(v_from)
             else:
                 self.nexts[v_to] = [v_from]
-            self.n_edge[layer] += 1
+            self.n_edge += 1
+            self.new_edges[layer] += 1
+        if self.weights[(v_from,v_to)][0,layer]==0:
+            self.layer_edges[layer] += 1
         self.weights[(v_from,v_to)][0,layer] += weight
+    
+    def get_weight_matrix(self):
+        if getattr(self, "weight_matrix", None) is not None:
+            return self.weight_index, self.weight_matrix
+        self.weight_matrix = lil_matrix((len(self.weights), self.size), dtype=int)
+        self.weight_index = pd.Index(list(self.weights.keys()))
+        for k in self.weights:
+            self.weight_matrix[self.weight_index.get_loc(k),:] = self.weights[k][0]
+        return self.weight_index, self.weight_matrix
