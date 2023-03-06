@@ -35,6 +35,7 @@ class Eth2v1Simulator:
         self.max_epochs = (len(txs)+self.epoch_tx_count-1)//self.epoch_tx_count
 
     def reset(self, ptx=0):
+        self.reset_ptx = ptx
         self.ptx = ptx
         self.n_cross_tx = 0
         self.n_inner_tx = 0
@@ -80,6 +81,7 @@ class Eth2v1Simulator:
         return done
 
     def info(self):
+        n_tx = self.ptx - self.reset_ptx
         n_block = 0
         n_block_tx = 0
         n_block_out_tx = 0
@@ -109,10 +111,10 @@ class Eth2v1Simulator:
             simulate_time = self.simulate_time,
             n_block = n_block,
             target_n_block = self.n_shards*self.simulate_time/self.block_interval,
-            n_tx = self.ptx,
+            n_tx = n_tx,
             n_inner_tx = self.n_inner_tx,
             n_cross_tx = self.n_cross_tx,
-            prop_cross_tx = float(self.n_cross_tx) / self.ptx,
+            prop_cross_tx = float(self.n_cross_tx) / n_tx,
             n_block_tx = n_block_tx,
             n_block_out_tx = n_block_out_tx,
             n_block_forward_tx = n_block_forward_tx,
