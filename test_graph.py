@@ -8,11 +8,12 @@ from strategy.account import StaticAccountAllocate, PartitionAccountAllocate
 from strategy.allocate import GroupAllocateStrategy
 from env.eth2 import Eth2v1Simulator, Eth2v1
 
-def test_graph(txs, n_shards, tx_rate, method=['all', 'last', 'past', 'current', 'history'], past=[100]):
+def test_graph(txs, n_shards, tx_rate, method=['all', 'last', 'past', 'current', 'history'], past=[100], n_blocks=10):
     print('Account Graph:')
     graph_path = './metis/graphs/test_graph.txt'
     allocator = PartitionAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
-    simulator = Eth2v1Simulator(txs=txs[['from','to','gas']], allocate=allocator, n_shards=n_shards, tx_rate=tx_rate)
+    txs = txs[['from','to','gas']]
+    simulator = Eth2v1Simulator(txs=txs, allocate=allocator, n_shards=n_shards, tx_rate=tx_rate, n_blocks=n_blocks)
     
     if 'all' in method:
         print("Partition with all txs:")
@@ -51,12 +52,12 @@ def test_graph(txs, n_shards, tx_rate, method=['all', 'last', 'past', 'current',
     if 'past' in method:
         for past_step in past:
             print(f"Partition with past {past_step} steps txs:")
-            simulator.reset()
+            simulator.reset(ptx=past_step*simulator.epoch_tx_count)
             account_list = []
             parts = []
             for _ in tqdm(range(simulator.max_epochs)):
                 simulator.step((account_list, parts))
-                graph = Graph(simulator.txs[max(0,simulator.ptx-past_step*simulator.epoch_tx_count):simulator.ptx]).save(graph_path)
+                graph = Graph(simulator.txs[simulator.ptx-past_step*simulator.epoch_tx_count:simulator.ptx]).save(graph_path)
                 parts = Partition(graph_path).partition(n_shards)
                 account_list = graph.vertex_idx
             print(simulator.info())
@@ -189,10 +190,11 @@ if __name__=='__main__':
     parser = argparse.ArgumentParser(description='test graph')
     parser.add_argument('funcs', nargs='*', default=['graph', 'group', 'popular', 'coarsen'])
     parser.add_argument('--method', type=str, nargs='*', choices=['all', 'last', 'past', 'current', 'history'], default=['all'])
-    parser.add_argument('--past', type=int, nargs='*', default=[20, 40, 60, 80, 100])
+    parser.add_argument('--past', type=int, nargs='*', default=[20, 40, 60, 80, 100]) # number of past steps
     parser.add_argument('-k', '--k', type=int, default=3)
     parser.add_argument('-g', '--g', type=int, default=10)
     parser.add_argument('--tx_rate', type=int, default=100)
+    parser.add_argument('--n_blocks', type=int, default=10) # number of blocks per step
     args = parser.parse_args()
     print(args)
 
@@ -206,7 +208,7 @@ if __name__=='__main__':
     n_groups = 1 << g
     tx_rate = args.tx_rate
 
-    func_dict = {'graph':lambda:test_graph(txs, n_shards=n_shards, tx_rate=tx_rate, method=args.method, past=args.past),
+    func_dict = {'graph':lambda:test_graph(txs, n_shards=n_shards, tx_rate=tx_rate, method=args.method, past=args.past, n_blocks=args.n_blocks),
                 'group':lambda:test_group_graph(txs, k=k, g=g, addr_len=addr_len, tx_rate=tx_rate),
                 'popular':lambda:test_popular_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=tx_rate, method=args.method, past=args.past),
                 'coarsen':lambda:test_coarsen_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=tx_rate)}

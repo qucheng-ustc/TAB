@@ -1,5 +1,6 @@
 import pandas as pd
 import pymysql
+import datetime
 
 class DataLoader:
     def __init__(self, host="127.0.0.1", port=3306, user='root', db='arrl', charset='utf8'):
@@ -14,10 +15,6 @@ class DataLoader:
         if isinstance(start_time, int):
             pass
         elif isinstance(start_time, str):
-            import re
-            if re.match(r'^\d+-\d+-\d+ \d+:\d+:\d+$', start_time) is None:
-                raise TypeError(f"{start_time} is not an valid time str")
-            import time, datetime
             start_time = int(datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S').timestamp())
         else:
             raise TypeError(f"{start_time} is not an int or str")
@@ -25,6 +22,12 @@ class DataLoader:
         if end_time is None:
             sql = "select * from block where timestamp>=%d"%start_time
         else:
+            if isinstance(end_time, int):
+                pass
+            elif isinstance(end_time, str):
+                end_time = int(datetime.datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S').timestamp())
+            else:
+                raise TypeError(f"{end_time} is not an int or str")
             sql = "select * from block where timestamp>=%d and timestamp<=%d"%(start_time, end_time)
         cursor.execute(sql)
         print(sql)

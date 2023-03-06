@@ -34,8 +34,8 @@ class Eth2v1Simulator:
 
         self.max_epochs = (len(txs)+self.epoch_tx_count-1)//self.epoch_tx_count
 
-    def reset(self):
-        self.ptx = 0
+    def reset(self, ptx=0):
+        self.ptx = ptx
         self.n_cross_tx = 0
         self.n_inner_tx = 0
         self.simulate_time = 0
