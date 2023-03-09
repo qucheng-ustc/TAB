@@ -1,6 +1,9 @@
 import numpy as np
 import pandas as pd
 from scipy.sparse import lil_matrix, csr_matrix
+import tqdm
+
+from .graph import Graph
 
 class GraphStack:
     def __init__(self, block_txs, debug=False):
@@ -21,10 +24,10 @@ class GraphStack:
         self.layer_edges = [0]*self.size
         self.nexts = dict()
         self.weights = dict()
-
-        for l, (block, txs) in enumerate(block_txs.groupby('block')):
-            if debug:
-                print(f'Layer {l}:', 'block', block, 'txs', len(txs))
+        iter_groups = enumerate(block_txs.groupby('block'))
+        if debug:
+            iter_groups = tqdm.tqdm(iter_groups, desc='Layer')
+        for l, (block, txs) in iter_groups:
             for index, addr_from, addr_to in txs[['from','to']].itertuples():
                 v_from = self.vertex_idx.get_loc(addr_from)
                 v_to = self.vertex_idx.get_loc(addr_to)
@@ -51,11 +54,36 @@ class GraphStack:
             self.layer_edges[layer] += 1
         self.weights[(v_from,v_to)][0,layer] += weight
     
-    def get_weight_matrix(self):
-        if getattr(self, "weight_matrix", None) is not None:
-            return self.weight_index, self.weight_matrix
-        self.weight_matrix = lil_matrix((len(self.weights), self.size), dtype=int)
+    def get_weight_matrix(self, start=0, stop=None):
+        if stop is None:
+            stop = self.size
+        self.weight_matrix = lil_matrix((len(self.weights), stop - start), dtype=int)
         self.weight_index = pd.Index(list(self.weights.keys()))
         for k in self.weights:
-            self.weight_matrix[self.weight_index.get_loc(k),:] = self.weights[k][0]
+            self.weight_matrix[self.weight_index.get_loc(k),:] = self.weights[k][0][start:stop]
         return self.weight_index, self.weight_matrix
+
+class WeightGraph(Graph):
+    def __init__(self, vertex_idx, weight_index, weight_array):
+        # remove zero weights
+        self.vertex_idx = pd.Index(dtype=vertex_idx.dtype)
+        v_map = {}
+        for i, weight in enumerate(weight_array):
+            if weight<=0: continue
+            v_from, v_to = weight_index[i]
+            if v_from not in v_map:
+                v_map[v_from] = len(self.vertex_idx)
+                self.vertex_idx.append(vertex_idx[v_from])
+            if v_to not in v_map:
+                v_map[v_to] = len(self.vertex_idx)
+                self.vertex_idx.append(vertex_idx[v_to])
+        self.n_vertex = len(self.vertex_idx)
+        self.weights = dict()
+        self.nexts = dict()
+        self.v_weights = np.zeros(shape=self.n_vertex, dtype=weight_array.dtype)
+        self.n_edge = 0
+        for i, weight in enumerate(weight_array):
+            if weight<=0: continue
+            v_from, v_to = weight_index[i]
+            v_from, v_to = v_map[v_from], v_map[v_to]
+            self._add_edge(v_from, v_to, weight, v_weight=True)

@@ -1,9 +1,9 @@
 import pandas as pd
-import pymysql
 import datetime
 
 class DataLoader:
     def __init__(self, host="127.0.0.1", port=3306, user='root', db='arrl', charset='utf8'):
+        import pymysql
         self.db = pymysql.connect(host=host, port=port, user=user, db=db, charset=charset)
         self.cursor = self.db.cursor()
         self.cursor.execute("select version()")
@@ -44,6 +44,34 @@ class DataLoader:
         df_tx = pd.DataFrame(data, columns=['blockNumber','transactionIndex','from','to','gas'])
         print(len(df_tx))
         return df_block, df_tx
+
+class XBlockLoader:
+
+    files = [
+        "0to999999_BlockTransaction",
+        "1000000to1999999_BlockTransaction",
+        "2000000to2999999_BlockTransaction",
+        "3000000to3999999_BlockTransaction",
+        "4000000to4999999_BlockTransaction",
+        "5000000to5999999_BlockTransaction",
+        "6000000to6999999_BlockTransaction",
+        "7000000to7999999_BlockTransaction",
+        "8000000to8999999_BlockTransaction",
+        "9000000to9999999_BlockTransaction",
+        "10000000to10999999_BlockTransaction",
+        "11000000to11999999_BlockTransaction",
+        "12000000to12999999_BlockTransaction",
+        "13000000to13249999_BlockTransaction",
+    ]
+
+    def __init__(self, data_path='../data/'):
+        import os
+        self.data_path = os.path.abspath(data_path)
+        print('Data path:', self.data_path)
+    
+    def load_data(self, start_block, end_block=None):
+        import zipfile
+        pass
 
 default_dataloader = None
 
