@@ -32,6 +32,7 @@ class GraphStack:
                 v_from = self.vertex_idx.get_loc(addr_from)
                 v_to = self.vertex_idx.get_loc(addr_to)
                 self._add_edge(l, v_from, v_to)
+        self.weight_index = pd.Index(list(self.weights.keys()))
         if debug:
             print('Edge:', self.n_edge, ', layer edges:', self.layer_edges, ', new edges:', self.new_edges, 'sum', sum(self.new_edges))
     
@@ -58,25 +59,25 @@ class GraphStack:
         if stop is None:
             stop = self.size
         self.weight_matrix = lil_matrix((len(self.weights), stop - start), dtype=int)
-        self.weight_index = pd.Index(list(self.weights.keys()))
         for k in self.weights:
             self.weight_matrix[self.weight_index.get_loc(k),:] = self.weights[k][0][start:stop]
-        return self.weight_index, self.weight_matrix
+        return self.weight_matrix
 
 class WeightGraph(Graph):
     def __init__(self, vertex_idx, weight_index, weight_array):
         # remove zero weights
-        self.vertex_idx = pd.Index(dtype=vertex_idx.dtype)
+        vertexes = []
         v_map = {}
         for i, weight in enumerate(weight_array):
             if weight<=0: continue
             v_from, v_to = weight_index[i]
             if v_from not in v_map:
-                v_map[v_from] = len(self.vertex_idx)
-                self.vertex_idx.append(vertex_idx[v_from])
+                v_map[v_from] = len(vertexes)
+                vertexes.append(vertex_idx[v_from])
             if v_to not in v_map:
-                v_map[v_to] = len(self.vertex_idx)
-                self.vertex_idx.append(vertex_idx[v_to])
+                v_map[v_to] = len(vertexes)
+                vertexes.append(vertex_idx[v_to])
+        self.vertex_idx = pd.Index(vertexes)
         self.n_vertex = len(self.vertex_idx)
         self.weights = dict()
         self.nexts = dict()

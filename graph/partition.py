@@ -21,7 +21,7 @@ class Partition:
                 cmd = f'gpmetis {self.metis_graph} {nparts}'
             else:
                 cmd = f'gpmetis {self.metis_graph} {nparts} 2>&1 >/dev/null'
-            subprocess.call(cmd, shell=True)
+            ret = subprocess.call(cmd, shell=True)
             output_path = f'{self.metis_graph}.part.{nparts}'
             with open(output_path, 'r') as f:
                 parts = [int(line) for line in f]

@@ -53,13 +53,12 @@ def test_graph(txs, n_shards, tx_rate, method=['all', 'last', 'past', 'current',
         for past_step in past:
             print(f"Partition with past {past_step} steps txs:")
             simulator.reset(ptx=past_step*simulator.epoch_tx_count)
-            account_list = []
-            parts = []
             for _ in tqdm(range(simulator.max_epochs)):
-                simulator.step((account_list, parts))
                 graph = Graph(simulator.txs[simulator.ptx-past_step*simulator.epoch_tx_count:simulator.ptx]).save(graph_path)
                 parts = Partition(graph_path).partition(n_shards)
                 account_list = graph.vertex_idx
+                done = simulator.step((account_list, parts))
+                if done: break
             print(simulator.info())
 
     if 'history' in method:
