@@ -194,11 +194,13 @@ if __name__=='__main__':
     parser.add_argument('-g', '--g', type=int, default=10)
     parser.add_argument('--tx_rate', type=int, default=100)
     parser.add_argument('--n_blocks', type=int, default=10) # number of blocks per step
+    parser.add_argument('--start_time', type=str, default='2021-08-01 00:00:00')
+    parser.add_argument('--end_time', type=str, default=None)
     args = parser.parse_args()
     print(args)
 
     loader = get_default_dataloader()
-    _, txs = loader.load_data(start_time='2021-08-01 00:00:00')
+    _, txs = loader.load_data(start_time=args.start_time, end_time=args.end_time)
     drop_contract_creation_tx(txs)
 
     k = args.k

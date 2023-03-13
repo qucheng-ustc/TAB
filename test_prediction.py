@@ -5,7 +5,7 @@ from arrl.dataloader import get_default_dataloader
 from arrl.preprocess import drop_contract_creation_tx
 from strategy.account import PartitionAccountAllocate, StaticAccountAllocate
 from env.eth2 import Eth2v1Simulator
-from prediction.account import LinearModel
+from prediction.account import LinearModel, AverageModel
 from prediction.metrics import mean_squared_error
 from graph.stack import Graph, GraphStack, WeightGraph
 from graph.partition import Partition
@@ -25,6 +25,7 @@ def test_prediction(train_txs, test_txs, n_shards, tx_rate, window=5, n_blocks=1
     train_weight_matrix = train_hgraph.get_weight_matrix().toarray()
     print('Train model:', train_weight_matrix.shape)
     model = LinearModel()
+    baseline_model = AverageModel()
     train_score = model.fit(train_weight_matrix, window=window)
     print('Train score:', train_score, 'Coef:', model.coef_, 'Intercept:', model.intercept_)
 
@@ -32,12 +33,15 @@ def test_prediction(train_txs, test_txs, n_shards, tx_rate, window=5, n_blocks=1
     train_simulator = Eth2v1Simulator(txs=train_txs, allocate=allocator, n_shards=n_shards, tx_rate=tx_rate, n_blocks=n_blocks)
     train_simulator.reset(ptx=(window-1)*epoch_tx_count)
     mse_list = []
+    baseline_mse_list = []
     real_mse_list = []
     for epoch in tqdm(range(train_simulator.max_epochs-window+1)):
         X = train_weight_matrix[:,epoch:epoch+window-1]
         y_true = train_weight_matrix[:,epoch+window-1]
         y_pred = model.predict(X)
+        baseline_y_pred = baseline_model.predict(X)
         mse_list.append(mean_squared_error(y_true, y_pred))
+        baseline_mse_list.append(mean_squared_error(y_true, baseline_y_pred))
         y_pred = np.ceil(y_pred).astype(int)
         real_mse_list.append(mean_squared_error(y_true, y_pred))
         graph = WeightGraph(train_hgraph.vertex_idx, train_hgraph.weight_index, y_pred).save(graph_path)
@@ -47,6 +51,7 @@ def test_prediction(train_txs, test_txs, n_shards, tx_rate, window=5, n_blocks=1
         if done: break
     print(train_simulator.info())
     print('MSE:', np.average(mse_list), max(mse_list), min(mse_list))
+    print('Baseline MSE:', np.average(baseline_mse_list), max(baseline_mse_list), min(baseline_mse_list))
     print('Real MSE:', np.average(real_mse_list), max(mse_list), min(mse_list))
 
     print('Simulate on test txs:', len(test_txs))
@@ -54,12 +59,15 @@ def test_prediction(train_txs, test_txs, n_shards, tx_rate, window=5, n_blocks=1
     test_hgraph = GraphStack(pd.DataFrame({'block':np.repeat(np.arange(simulator.max_epochs,dtype=int),epoch_tx_count),'from':test_txs['from'].values[:n_tx],'to':test_txs['to'].values[:n_tx]}), debug=True)
     simulator.reset(ptx=(window-1)*epoch_tx_count)
     mse_list = []
+    baseline_mse_list = []
     real_mse_list = []
     for epoch in tqdm(range(simulator.max_epochs-window+1)):
         Xy = test_hgraph.get_weight_matrix(start=epoch, stop=epoch+window).toarray()
         X, y_true = Xy[:,:-1], Xy[:,-1]
         y_pred = model.predict(X)
+        baseline_y_pred = baseline_model.predict(X)
         mse_list.append(mean_squared_error(y_true, y_pred))
+        baseline_mse_list.append(mean_squared_error(y_true, baseline_y_pred))
         y_pred = np.ceil(y_pred).astype(int)
         real_mse_list.append(mean_squared_error(y_true, y_pred))
         graph = WeightGraph(test_hgraph.vertex_idx, test_hgraph.weight_index, y_pred).save(graph_path)
@@ -68,6 +76,7 @@ def test_prediction(train_txs, test_txs, n_shards, tx_rate, window=5, n_blocks=1
         simulator.step((account_list, parts))
     print(simulator.info())
     print('MSE:', np.average(mse_list), max(mse_list), min(mse_list))
+    print('Baseline MSE:', np.average(baseline_mse_list), max(baseline_mse_list), min(baseline_mse_list))
     print('Real MSE:', np.average(real_mse_list), max(mse_list), min(mse_list))
 
 if __name__=='__main__':

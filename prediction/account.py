@@ -6,6 +6,10 @@ def rolling_window(a, window):
     strides = a.strides + (a.strides[-1],)
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
+class AverageModel:
+    def predict(self, X):
+        return np.average(X, axis=1)
+
 class LinearModel:
     def __init__(self):
         self.model = LinearRegression(fit_intercept=False, positive=True)

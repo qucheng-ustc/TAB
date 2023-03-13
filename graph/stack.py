@@ -11,7 +11,7 @@ class GraphStack:
         self.blocks = block_txs['block'].unique()
         self.size = len(self.blocks)
         if debug:
-            print('Blocks:', self.blocks, ' Size:', self.size)
+            print('Blocks:', min(self.blocks),'~', max(self.blocks), ' Size:', self.size)
         vertex_idx_from = pd.Index(block_txs['from'].unique())
         vertex_idx_to = pd.Index(block_txs['to'].unique())
         self.vertex_idx = vertex_idx_from.union(vertex_idx_to)
@@ -27,41 +27,42 @@ class GraphStack:
         iter_groups = enumerate(block_txs.groupby('block'))
         if debug:
             iter_groups = tqdm.tqdm(iter_groups, desc='Layer')
-        for l, (block, txs) in iter_groups:
+        for layer, (block, txs) in iter_groups:
             for index, addr_from, addr_to in txs[['from','to']].itertuples():
                 v_from = self.vertex_idx.get_loc(addr_from)
                 v_to = self.vertex_idx.get_loc(addr_to)
-                self._add_edge(l, v_from, v_to)
+                if v_from > v_to:
+                    v_from, v_to = v_to, v_from
+                if (v_from, v_to) in self.weights:
+                    continue
+                self.weights[(v_from,v_to)] = len(self.weights)
+                if v_from in self.nexts:
+                    self.nexts[v_from].append(v_to)
+                else:
+                    self.nexts[v_from] = [v_to]
+                if v_to in self.nexts:
+                    self.nexts[v_to].append(v_from)
+                else:
+                    self.nexts[v_to] = [v_from]
+                self.n_edge += 1
+                self.new_edges[layer] += 1
         self.weight_index = pd.Index(list(self.weights.keys()))
+        self.weight_matrix = lil_matrix((len(self.weights), self.size), dtype=int)
+        for layer, (block, txs) in enumerate(block_txs.groupby('block')):
+            for index, addr_from, addr_to in txs[['from','to']].itertuples():
+                v_from = self.vertex_idx.get_loc(addr_from)
+                v_to = self.vertex_idx.get_loc(addr_to)
+                if v_from > v_to:
+                    v_from, v_to = v_to, v_from
+                weight_id = self.weight_index.get_loc((v_from, v_to))
+                if self.weight_matrix[weight_id,layer]==0:
+                    self.layer_edges[layer] += 1
+                self.weight_matrix[weight_id,layer] += 1
         if debug:
             print('Edge:', self.n_edge, ', layer edges:', self.layer_edges, ', new edges:', self.new_edges, 'sum', sum(self.new_edges))
     
-    def _add_edge(self, layer, v_from, v_to, weight=1):
-        if v_from > v_to:
-            v_from, v_to = v_to, v_from
-        if (v_from, v_to) not in self.weights:
-            self.weights[(v_from,v_to)] = lil_matrix((1, self.size), dtype=int)
-            if v_from in self.nexts:
-                self.nexts[v_from].append(v_to)
-            else:
-                self.nexts[v_from] = [v_to]
-            if v_to in self.nexts:
-                self.nexts[v_to].append(v_from)
-            else:
-                self.nexts[v_to] = [v_from]
-            self.n_edge += 1
-            self.new_edges[layer] += 1
-        if self.weights[(v_from,v_to)][0,layer]==0:
-            self.layer_edges[layer] += 1
-        self.weights[(v_from,v_to)][0,layer] += weight
-    
     def get_weight_matrix(self, start=0, stop=None):
-        if stop is None:
-            stop = self.size
-        self.weight_matrix = lil_matrix((len(self.weights), stop - start), dtype=int)
-        for k in self.weights:
-            self.weight_matrix[self.weight_index.get_loc(k),:] = self.weights[k][0][start:stop]
-        return self.weight_matrix
+        return self.weight_matrix[:,start:stop]
 
 class WeightGraph(Graph):
     def __init__(self, vertex_idx, weight_index, weight_array):

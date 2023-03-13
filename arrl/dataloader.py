@@ -64,7 +64,7 @@ class XBlockLoader:
         "13000000to13249999_BlockTransaction",
     ]
 
-    def __init__(self, data_path='../data/'):
+    def __init__(self, data_path='../xblock_eth_data/'):
         import os
         self.data_path = os.path.abspath(data_path)
         print('Data path:', self.data_path)
