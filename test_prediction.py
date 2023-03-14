@@ -86,12 +86,16 @@ if __name__=='__main__':
     parser.add_argument('--tx_rate', type=int, default=100)
     parser.add_argument('--n_blocks', type=int, default=10) # number of blocks per step
     parser.add_argument('--window', type=int, default=5)
+    parser.add_argument('--train_start_time', type=str, default='2021-07-31 00:00:00')
+    parser.add_argument('--train_end_time', type=str, default='2021-07-31 23:59:59')
+    parser.add_argument('--test_start_time', type=str, default='2021-08-01 00:00:00')
+    parser.add_argument('--test_end_time', type=str, default=None)
     args = parser.parse_args()
     print(args)
 
     loader = get_default_dataloader()
-    _, train_txs = loader.load_data(start_time='2021-07-31 00:00:00', end_time='2021-07-31 23:59:59')
-    _, test_txs = loader.load_data(start_time='2021-08-01 00:00:00')
+    _, train_txs = loader.load_data(start_time=args.train_start_time, end_time=args.train_end_time)
+    _, test_txs = loader.load_data(start_time=args.test_start_time, end_time=args.test_end_time)
     drop_contract_creation_tx(train_txs)
     drop_contract_creation_tx(test_txs)
 
