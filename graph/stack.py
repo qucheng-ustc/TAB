@@ -21,6 +21,7 @@ class GraphStack:
             print('Vertex:', self.n_vertex)
         self.n_edge = 0
         self.new_edges = [0]*self.size
+        self.new_vertexes = [0]*self.size
         self.layer_edges = [0]*self.size
         self.nexts = dict()
         self.weights = dict()
@@ -40,10 +41,12 @@ class GraphStack:
                     self.nexts[v_from].append(v_to)
                 else:
                     self.nexts[v_from] = [v_to]
+                    self.new_vertexes[layer] += 1
                 if v_to in self.nexts:
                     self.nexts[v_to].append(v_from)
                 else:
                     self.nexts[v_to] = [v_from]
+                    self.new_vertexes[layer] += 1
                 self.n_edge += 1
                 self.new_edges[layer] += 1
         self.weight_index = pd.Index(list(self.weights.keys()))
@@ -59,6 +62,7 @@ class GraphStack:
                     self.layer_edges[layer] += 1
                 self.weight_matrix[weight_id,layer] += 1
         if debug:
+            print('Vertex:', self.n_vertex, ', new vertexes:', self.new_vertexes)
             print('Edge:', self.n_edge, ', layer edges:', self.layer_edges, ', new edges:', self.new_edges, 'sum', sum(self.new_edges))
     
     def get_weight_matrix(self, start=0, stop=None):
