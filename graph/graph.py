@@ -4,16 +4,21 @@ import collections
 import itertools
 
 class Graph:
-    def __init__(self, txs, debug=False):
+    def __init__(self, txs=None, debug=False):
         self.txs = txs
-        vertex_idx_from = pd.Index(txs['from'].unique())
-        vertex_idx_to = pd.Index(txs['to'].unique())
-        if debug:
-            print('Vertex from:', len(vertex_idx_from), 'Vertex to:', len(vertex_idx_to))
-        vertex_idx = vertex_idx_from.union(vertex_idx_to)
+        if txs is None or len(txs)==0:
+            vertex_idx = pd.Index([],dtype=object)
+        else:
+            vertex_idx_from = pd.Index(txs['from'].unique())
+            vertex_idx_to = pd.Index(txs['to'].unique())
+            if debug:
+                print('Vertex from:', len(vertex_idx_from), 'Vertex to:', len(vertex_idx_to))
+            vertex_idx = vertex_idx_from.union(vertex_idx_to)
         self._init(vertex_idx)
         if debug:
             print('Vertex:', self.n_vertex)
+        if self.n_vertex==0:
+            return
         txs = txs[['from','to']]
         for index, addr_from, addr_to in txs.itertuples():
             v_from = self.vertex_idx.get_loc(addr_from)

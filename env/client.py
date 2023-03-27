@@ -20,20 +20,19 @@ class Client:
     
     def reset(self, ptx=0):
         self.reset_ptx = ptx
-        self.next_ptx = ptx
         self.ptx = ptx
         return self.ptx>=len(self.txs)
     
     def n_tx(self):
         return self.ptx - self.reset_ptx
     
-    def done(self):
-        return self.ptx>=len(self.txs)
+    def done(self, time_interval=0):
+        return self.ptx+self.tx_rate*time_interval>=len(self.txs)
     
-    def next(self, time_interval):
-        self.ptx = self.next_ptx
+    def next(self, time_interval, peek=False):
         txs = self.txs.iloc[self.ptx:min(self.ptx+self.tx_rate*time_interval, len(self.txs))]
-        self.next_ptx += len(txs)
+        if not peek:
+            self.ptx += len(txs)
         return txs
     
     def past(self, time_interval):
@@ -91,8 +90,8 @@ class PryClient(Client):
         tx['to'] = new_to
         return tx
 
-    def next(self, time_interval):
-        self.ptx = self.next_ptx
+    def next(self, time_interval, peek=False):
         txs = self.txs.iloc[self.ptx:min(self.ptx+self.tx_rate*time_interval, len(self.txs))]
-        self.next_ptx += len(txs)
+        if not peek:
+            self.ptx += len(txs)
         return txs.apply(lambda tx:self.new_tx(tx),axis=1)

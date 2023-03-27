@@ -24,6 +24,7 @@ class Eth2v1Simulator:
         self.max_epochs = len(self.txs)//self.epoch_tx_count
 
     def reset(self, ptx=0):
+        self.allocate.reset()
         self.client.reset(ptx=ptx)
         self.n_cross_tx = 0
         self.n_inner_tx = 0
@@ -33,16 +34,15 @@ class Eth2v1Simulator:
         self.stx_forward = [deque() for _ in range(self.n_shards)]
         self.sblock = [[] for _ in range(self.n_shards)]
 
-        self.next_txs = self.client.next(time_interval=self.epoch_time)
-        return self.client.done()
+        return self.client.done(time_interval=self.epoch_time)
 
     def step(self, action):
         # one step contains n_blocks blocks
         self.simulate_time += self.epoch_time
-        txs = self.next_txs.copy()
+        self.allocate.apply(action) # apply allocate action before txs arrives
+        txs = self.client.next(time_interval=self.epoch_time).copy()
         self.epoch_txs = txs
-
-        self.allocate.apply(action)
+        
         txs['from_shard'] = txs['from'].map(self.allocate.allocate) # from shard index
         txs['to_shard'] = txs['to'].map(self.allocate.allocate) # to shard index
 
@@ -66,8 +66,7 @@ class Eth2v1Simulator:
                     if to_shard!=shard:
                         self.stx_forward[to_shard].append(tx)
 
-        self.next_txs = self.client.next(time_interval=self.epoch_time)
-        return self.client.done()
+        return self.client.done(time_interval=self.epoch_time)
 
     def info(self):
         n_tx = self.client.n_tx()
@@ -122,10 +121,8 @@ class Eth2v1Simulator:
 
 class Eth2v2Simulator(Eth2v1Simulator):
     def step(self, action):
-        # prepare new transactions
-        txs = self.next_txs.copy()
-
-        self.allocate.apply(action)
+        self.allocate.apply(action) # apply allocate action before txs arrives
+        txs = self.client.next(time_interval=self.epoch_time).copy() # prepare new transactions
         txs['from_shard'] = txs['from'].map(self.allocate.allocate) # from shard index
         txs['to_shard'] = txs['to'].map(self.allocate.allocate) # to shard index
 

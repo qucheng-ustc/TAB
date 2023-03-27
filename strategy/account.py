@@ -10,6 +10,9 @@ class AccountAllocate:
     def apply(self, action):
         pass
 
+    def reset(self):
+        pass
+
     def allocate(self, addr):
         raise NotImplementedError
 
@@ -55,6 +58,9 @@ class TableAccountAllocate(AccountAllocate):
     
     def apply(self, action):
         self.account_table.update(action)
+
+    def reset(self):
+        self.account_table.clear()
     
     def allocate(self, addr):
         if addr in self.account_table:

@@ -12,6 +12,9 @@ class AllocateStrategy:
     def apply(self, action):
         pass
 
+    def reset(self):
+        pass
+
     def allocate(self, addr):
         raise NotImplementedError
 
