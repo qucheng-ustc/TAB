@@ -6,39 +6,25 @@ from collections import deque, OrderedDict
 from gym.spaces import MultiDiscrete, Box, Dict
 
 class Eth2v1Simulator:
-    def __init__(self, txs, allocate, n_shards, tx_rate=1000, tx_per_block=200, block_interval=15, n_blocks=10):
-        self.tx_rate = tx_rate
+    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10):
         self.tx_per_block = tx_per_block
         self.block_interval = block_interval
         self.n_blocks = n_blocks
-        self.txs = txs
         self.allocate = allocate
         self.n_shards = n_shards
 
-        if "from_addr" in txs.columns:
-            self.from_col = "from_addr"
-        elif "from" in txs.columns:
-            self.from_col = "from"
-        else:
-            raise ValueError(txs.columns)
-        if "to_addr" in txs.columns:
-            self.to_col = "to_addr"
-        elif "to" in txs.columns:
-            self.to_col = "to"
-        else:
-            raise ValueError(txs.columns)
-        
-        self.txs = self.txs[[self.from_col, self.to_col, 'gas']]
+        self.client = client
+        self.txs = client.txs
+        self.tx_rate = client.tx_rate
 
-        self.tx_count = block_interval * tx_rate
+        self.tx_count = block_interval * self.tx_rate
         self.epoch_time = n_blocks * block_interval
         self.epoch_tx_count = self.tx_count * n_blocks
 
-        self.max_epochs = len(txs)//self.epoch_tx_count
+        self.max_epochs = len(self.txs)//self.epoch_tx_count
 
     def reset(self, ptx=0):
-        self.reset_ptx = ptx
-        self.ptx = ptx
+        self.client.reset(ptx=ptx)
         self.n_cross_tx = 0
         self.n_inner_tx = 0
         self.simulate_time = 0
@@ -47,19 +33,18 @@ class Eth2v1Simulator:
         self.stx_forward = [deque() for _ in range(self.n_shards)]
         self.sblock = [[] for _ in range(self.n_shards)]
 
-        return self.ptx>=len(self.txs)
+        self.next_txs = self.client.next(time_interval=self.epoch_time)
+        return self.client.done()
 
     def step(self, action):
         # one step contains n_blocks blocks
         self.simulate_time += self.epoch_time
-        txs = self.txs.iloc[self.ptx:min(self.ptx+self.epoch_tx_count, len(self.txs))].copy()
+        txs = self.next_txs.copy()
         self.epoch_txs = txs
-        self.ptx += len(txs)
-        done = self.ptx+self.epoch_tx_count > len(self.txs)
 
         self.allocate.apply(action)
-        txs['from_shard'] = txs[self.from_col].map(self.allocate.allocate) # from shard index
-        txs['to_shard'] = txs[self.to_col].map(self.allocate.allocate) # to shard index
+        txs['from_shard'] = txs['from'].map(self.allocate.allocate) # from shard index
+        txs['to_shard'] = txs['to'].map(self.allocate.allocate) # to shard index
 
         counts = (txs['from_shard'] == txs['to_shard']).value_counts()
         self.n_inner_tx += counts.get(True, default=0)
@@ -80,10 +65,12 @@ class Eth2v1Simulator:
                     to_shard = tx[4]
                     if to_shard!=shard:
                         self.stx_forward[to_shard].append(tx)
-        return done
+
+        self.next_txs = self.client.next(time_interval=self.epoch_time)
+        return self.client.done()
 
     def info(self):
-        n_tx = self.ptx - self.reset_ptx
+        n_tx = self.client.n_tx()
         n_block = 0
         n_block_tx = 0
         n_block_out_tx = 0
@@ -136,13 +123,11 @@ class Eth2v1Simulator:
 class Eth2v2Simulator(Eth2v1Simulator):
     def step(self, action):
         # prepare new transactions
-        txs = self.txs.iloc[self.ptx:min(self.ptx+self.epoch_tx_count, len(self.txs))].copy()
-        self.ptx += len(txs)
-        done = self.ptx+self.epoch_tx_count >= len(self.txs)
+        txs = self.next_txs.copy()
 
         self.allocate.apply(action)
-        txs['from_shard'] = txs[self.from_col].map(self.allocate.allocate) # from shard index
-        txs['to_shard'] = txs[self.to_col].map(self.allocate.allocate) # to shard index
+        txs['from_shard'] = txs['from'].map(self.allocate.allocate) # from shard index
+        txs['to_shard'] = txs['to'].map(self.allocate.allocate) # to shard index
 
         counts = (txs['from_shard'] == txs['to_shard']).value_counts()
         self.n_inner_tx += counts.get(True, default=0)
@@ -183,7 +168,8 @@ class Eth2v2Simulator(Eth2v1Simulator):
                     if to_shard!=shard:
                         stx_forward[to_shard].append(tx)
             self.simulate_time += self.block_interval
-        return done
+        self.next_txs = self.client.next(time_interval=self.epoch_time)
+        return self.client.done()
 
 def min_max_scale(a, min_val=None, max_val=None):
     if min_val is None:

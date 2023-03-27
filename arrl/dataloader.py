@@ -10,24 +10,28 @@ class DataLoader:
         data = self.cursor.fetchone()
         print("Database Version: %s"%data)
 
-    def load_data(self, start_time, end_time=None):
+    def load_data(self, start_time=None, end_time=None):
         # start_time : timestamp or time str with format "%Y-%m-%d %H:%M:%S"
-        if isinstance(start_time, int):
-            pass
-        elif isinstance(start_time, str):
-            start_time = int(datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S').timestamp())
-        else:
-            raise TypeError(f"{start_time} is not an int or str")
-        cursor = self.cursor
-        if end_time is None:
-            sql = "select * from block where timestamp>=%d"%start_time
-        else:
-            if isinstance(end_time, int):
+        def parse_time(t):
+            if t is None:
+                return None
+            if isinstance(t, int):
                 pass
-            elif isinstance(end_time, str):
-                end_time = int(datetime.datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S').timestamp())
+            elif isinstance(t, str):
+                t = int(datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S').timestamp())
             else:
-                raise TypeError(f"{end_time} is not an int or str")
+                raise TypeError(f"{t} is not an int or str")
+            return t
+        start_time = parse_time(start_time)
+        end_time = parse_time(end_time)
+        cursor = self.cursor
+        if start_time is None and end_time is None:
+            sql = "select * from block"
+        elif end_time is None:
+            sql = "select * from block where timestamp>=%d"%start_time
+        elif start_time is None:
+            sql = "select * from block where timestamp<=%d"%end_time
+        else:
             sql = "select * from block where timestamp>=%d and timestamp<=%d"%(start_time, end_time)
         cursor.execute(sql)
         print(sql)
@@ -47,7 +51,7 @@ class DataLoader:
 
 class XBlockLoader:
 
-    files = [
+    tx_files = [
         "0to999999_BlockTransaction",
         "1000000to1999999_BlockTransaction",
         "2000000to2999999_BlockTransaction",

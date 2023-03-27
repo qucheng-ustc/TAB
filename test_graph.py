@@ -4,17 +4,94 @@ from arrl.dataloader import get_default_dataloader
 from arrl.preprocess import drop_contract_creation_tx, convert_tx_addr
 from graph.graph import Graph, GroupGraph, PopularGroupGraph, CoarsenGraph
 from graph.partition import Partition
-from strategy.account import StaticAccountAllocate, PartitionAccountAllocate
+from strategy.account import StaticAccountAllocate, PartitionAccountAllocate, TableAccountAllocate
 from strategy.allocate import GroupAllocateStrategy
 from env.eth2 import Eth2v1Simulator, Eth2v1
+from env.client import Client, PryClient
 
-def test_graph(txs, n_shards, tx_rate, method=['all', 'last', 'past', 'current', 'history'], past=[100], n_blocks=10):
+def test_graph_table(txs, client='normal', n_shards=8, tx_rate=100, n_blocks=10, method=['last', 'past'], past=[10]):
+    print('Account graph & Table allocate:')
+    graph_path = './metis/graphs/test_graph_table.txt'
+    allocator = TableAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
+    txs = txs[['from','to','gas']]
+    if client == 'pry':
+        client = PryClient(txs=txs, tx_rate=tx_rate, n_shards=n_shards, account_table=allocator.account_table)
+    else:
+        client = Client(txs=txs, tx_rate=tx_rate)
+    simulator = Eth2v1Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks)
+
+    if 'none' in method:
+        print('Empty table:')
+        simulator.reset()
+        for _ in tqdm(range(simulator.max_epochs)):
+            simulator.step({})
+        print(simulator.info())
+
+    if 'all' in method:
+        print('Table updated by all txs partition:')
+        graph = Graph(txs=txs, debug=True).save(graph_path)
+        parts = Partition(graph_path).partition(n_shards, debug=True)
+        print('Parts:', len(parts))
+        account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
+        simulator.reset()
+        for _ in tqdm(range(simulator.max_epochs)):
+            simulator.step(account_table)
+        print(simulator.info())
+    
+    if 'current' in method:
+        print("Table updated by current partition:")
+        simulator.reset()
+        for _ in tqdm(range(simulator.max_epochs)):
+            graph = Graph(simulator.next_txs).save(graph_path)
+            parts = Partition(graph_path).partition(n_shards)
+            account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
+            done = simulator.step(account_table)
+            if done: break
+        print(simulator.info())
+    
+    if 'last' in method:
+        print('Table updated by last step partition:')
+        simulator.reset()
+        account_table = {}
+        for _ in tqdm(range(simulator.max_epochs)):
+            done = simulator.step(account_table)
+            if done: break
+            graph = Graph(simulator.epoch_txs).save(graph_path)
+            parts = Partition(graph_path).partition(n_shards)
+            account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
+        print(simulator.info())
+    
+    if 'past' in method:
+        for past_step in past:
+            print(f"Table updated by past {past_step} steps partition:")
+            simulator.reset(ptx=past_step*simulator.epoch_tx_count)
+            for _ in tqdm(range(simulator.max_epochs)):
+                graph = Graph(simulator.client.past(past_step*simulator.epoch_time)).save(graph_path)
+                parts = Partition(graph_path).partition(n_shards)
+                account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
+                done = simulator.step(account_table)
+                if done: break
+            print(simulator.info())
+
+def test_graph(txs, client='normal', n_shards=8, tx_rate=100, method=['all', 'last', 'past', 'current', 'history'], past=[100], n_blocks=10):
     print('Account Graph:')
+    txs = txs[['from','to','gas']]
     graph_path = './metis/graphs/test_graph.txt'
     allocator = PartitionAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
-    txs = txs[['from','to','gas']]
-    simulator = Eth2v1Simulator(txs=txs, allocate=allocator, n_shards=n_shards, tx_rate=tx_rate, n_blocks=n_blocks)
-    
+    if client == 'pry':
+        assert(len(method)==1 and method[0]=='none')
+        client = PryClient(txs=txs, tx_rate=tx_rate, n_shards=n_shards, account_table={})
+    else:
+        client = Client(txs=txs, tx_rate=tx_rate)
+    simulator = Eth2v1Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks)
+
+    if 'none' in method:
+        print('No partition:')
+        simulator.reset()
+        for _ in tqdm(range(simulator.max_epochs)):
+            simulator.step(([], []))
+        print(simulator.info())
+
     if 'all' in method:
         print("Partition with all txs:")
         graph = Graph(txs=txs, debug=True).save(graph_path)
@@ -28,13 +105,11 @@ def test_graph(txs, n_shards, tx_rate, method=['all', 'last', 'past', 'current',
     if 'current' in method:
         print("Partition with current step txs:")
         simulator.reset()
-        account_list = []
-        parts = []
         for _ in tqdm(range(simulator.max_epochs)):
-            simulator.step((account_list, parts))
-            graph = Graph(simulator.txs[simulator.ptx:min(len(simulator.txs),simulator.ptx+simulator.epoch_tx_count)]).save(graph_path)
+            graph = Graph(simulator.next_txs).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
-            account_list = graph.vertex_idx
+            done = simulator.step((graph.vertex_idx, parts))
+            if done: break
         print(simulator.info())
     
     if 'last' in method:
@@ -43,7 +118,8 @@ def test_graph(txs, n_shards, tx_rate, method=['all', 'last', 'past', 'current',
         account_list = []
         parts = []
         for _ in tqdm(range(simulator.max_epochs)):
-            simulator.step((account_list, parts))
+            done = simulator.step((account_list, parts))
+            if done: break
             graph = Graph(simulator.epoch_txs).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
             account_list = graph.vertex_idx
@@ -54,7 +130,7 @@ def test_graph(txs, n_shards, tx_rate, method=['all', 'last', 'past', 'current',
             print(f"Partition with past {past_step} steps txs:")
             simulator.reset(ptx=past_step*simulator.epoch_tx_count)
             for _ in tqdm(range(simulator.max_epochs)):
-                graph = Graph(simulator.txs[simulator.ptx-past_step*simulator.epoch_tx_count:simulator.ptx]).save(graph_path)
+                graph = Graph(simulator.txs[simulator.client.ptx-past_step*simulator.epoch_tx_count:simulator.client.ptx]).save(graph_path)
                 parts = Partition(graph_path).partition(n_shards)
                 account_list = graph.vertex_idx
                 done = simulator.step((account_list, parts))
@@ -68,7 +144,7 @@ def test_graph(txs, n_shards, tx_rate, method=['all', 'last', 'past', 'current',
         parts = []
         graph = None
         for epoch in tqdm(range(simulator.max_epochs)):
-            simulator.step((account_list, parts))
+            done = simulator.step((account_list, parts))
             if graph is None:
                 graph = Graph(simulator.epoch_txs).save(graph_path)
             else:
@@ -187,15 +263,16 @@ if __name__=='__main__':
 
     import argparse
     parser = argparse.ArgumentParser(description='test graph')
-    parser.add_argument('funcs', nargs='*', default=['graph', 'group', 'popular', 'coarsen'])
-    parser.add_argument('--method', type=str, nargs='*', choices=['all', 'last', 'past', 'current', 'history'], default=['all'])
-    parser.add_argument('--past', type=int, nargs='*', default=[20, 40, 60, 80, 100]) # number of past steps
+    parser.add_argument('funcs', nargs='*', default=['graph'], choices=['graph', 'group', 'popular', 'coarsen', 'table'])
+    parser.add_argument('--method', type=str, nargs='*', choices=['none', 'all', 'last', 'past', 'current', 'history'], default=['all'])
+    parser.add_argument('--past', type=int, nargs='*', default=[20]) # list of number of past steps
     parser.add_argument('-k', '--k', type=int, default=3)
     parser.add_argument('-g', '--g', type=int, default=10)
     parser.add_argument('--tx_rate', type=int, default=100)
     parser.add_argument('--n_blocks', type=int, default=10) # number of blocks per step
     parser.add_argument('--start_time', type=str, default='2021-08-01 00:00:00')
     parser.add_argument('--end_time', type=str, default=None)
+    parser.add_argument('--client', type=str, default='normal', choices=['normal', 'pry'])
     args = parser.parse_args()
     print(args)
 
@@ -209,10 +286,11 @@ if __name__=='__main__':
     n_groups = 1 << g
     tx_rate = args.tx_rate
 
-    func_dict = {'graph':lambda:test_graph(txs, n_shards=n_shards, tx_rate=tx_rate, method=args.method, past=args.past, n_blocks=args.n_blocks),
+    func_dict = {'graph':lambda:test_graph(txs, client=args.client, n_shards=n_shards, tx_rate=tx_rate, method=args.method, past=args.past, n_blocks=args.n_blocks),
                 'group':lambda:test_group_graph(txs, k=k, g=g, addr_len=addr_len, tx_rate=tx_rate),
                 'popular':lambda:test_popular_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=tx_rate, method=args.method, past=args.past),
-                'coarsen':lambda:test_coarsen_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=tx_rate)}
+                'coarsen':lambda:test_coarsen_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=tx_rate),
+                'table':lambda:test_graph_table(txs, client=args.client, n_shards=n_shards, tx_rate=tx_rate, method=args.method, past=args.past, n_blocks=args.n_blocks)}
 
     for func in args.funcs:
         func_dict[func]()
