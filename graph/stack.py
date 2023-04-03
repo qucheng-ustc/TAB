@@ -1,9 +1,27 @@
 import numpy as np
 import pandas as pd
-from scipy.sparse import lil_matrix, csr_matrix
+from scipy.sparse import lil_matrix, csr_matrix, csc_matrix, find
 import tqdm
 
 from .graph import Graph
+
+def spm_col_max(spm):
+    csc = spm.tocsc()
+    cmax = np.zeros(shape=csc.shape[1])
+    for i in range(csc.shape[1]):
+        row_ind, col_ind, data = find(csc.getcol(i))
+        if len(data)>0:
+            cmax[i] = np.max(data)
+    return cmax
+
+def spm_col_min(spm):
+    csc = spm.tocsc()
+    cmin = np.zeros(shape=csc.shape[1])
+    for i in range(csc.shape[1]):
+        row_ind, col_ind, data = find(csc.getcol(i))
+        if len(data)>0:
+            cmin[i] = np.min(data)
+    return cmin
 
 class GraphStack:
     def __init__(self, block_txs, debug=False):
@@ -86,13 +104,26 @@ class GraphStack:
             for layer in range(self.size):
                 for ei in self.new_edges[layer]:
                     new_weight_matrix[ei,layer] = self.weight_matrix[ei,layer]
-            print('weights sum:', self.weight_matrix.sum(axis=0), 'new weights sum:', new_weight_matrix.sum(axis=0), 'prop:', new_weight_matrix.sum(axis=0)/self.weight_matrix.sum(axis=0))
+            weight_layer_sum = self.weight_matrix.sum(axis=0)
+            new_weight_layer_sum = new_weight_matrix.sum(axis=0)
+            print('weights sum:', weight_layer_sum, 'new weights sum:', new_weight_layer_sum, 'prop:', new_weight_layer_sum/weight_layer_sum)
+            weight_layer_mean = weight_layer_sum/self.weight_matrix.getnnz(axis=0)
+            new_weight_layer_mean = new_weight_layer_sum/new_weight_matrix.getnnz(axis=0)
+            print('weights mean:', weight_layer_mean, 'new weights mean:', new_weight_layer_mean)
+            weight_layer_max = spm_col_max(self.weight_matrix)
+            new_weight_layer_max = spm_col_max(new_weight_matrix)
+            print('weights max:', weight_layer_max, 'new weights max:', new_weight_layer_max)
+            weight_layer_min = spm_col_min(self.weight_matrix)
+            new_weight_layer_min = spm_col_min(new_weight_matrix)
+            print('weights min:', weight_layer_min, 'new weights min:', new_weight_layer_min)
     
     def get_weight_matrix(self, start=0, stop=None):
         return self.weight_matrix[:,start:stop]
+    def get_vweight_matrix(self, start=0, stop=None):
+        return self.vweight_matrix[:,start:stop]
 
 class WeightGraph(Graph):
-    def __init__(self, vertex_idx, weight_index, weight_array):
+    def __init__(self, vertex_idx, weight_index, weight_array, vweight_array=None, vweight_weight=0.):
         # remove zero weights
         vertexes = []
         v_map = {}
@@ -116,3 +147,7 @@ class WeightGraph(Graph):
             v_from, v_to = weight_index[i]
             v_from, v_to = v_map[v_from], v_map[v_to]
             self._add_edge(v_from, v_to, weight, v_weight=True)
+        # update v_weights with external vweight_array
+        if vweight_array is not None:
+            self.v_weights = (1.-vweight_weight)*self.v_weights + vweight_weight*vweight_array
+        

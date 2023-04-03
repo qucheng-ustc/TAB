@@ -6,10 +6,10 @@ from graph.graph import Graph, GroupGraph, PopularGroupGraph, CoarsenGraph
 from graph.partition import Partition
 from strategy.account import StaticAccountAllocate, PartitionAccountAllocate, TableAccountAllocate
 from strategy.allocate import GroupAllocateStrategy
-from env.eth2 import Eth2v1Simulator, Eth2v1
+from env.eth2 import Eth2v1Simulator, Eth2v1, Eth2v2Simulator
 from env.client import Client, PryClient
 
-def test_graph_table(txs, client='normal', method=['last', 'past'], past=[10], args=None):
+def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', 'past'], past=[10], args=None):
     n_shards = args.n_shards
     n_blocks = args.n_blocks
     tx_rate = args.tx_rate
@@ -23,7 +23,10 @@ def test_graph_table(txs, client='normal', method=['last', 'past'], past=[10], a
         client = PryClient(txs=txs, tx_rate=tx_rate, n_shards=n_shards, account_table=allocator.account_table)
     else:
         client = Client(txs=txs, tx_rate=tx_rate)
-    simulator = Eth2v1Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
+    if simulator == 'eth2v2':
+        simulator = Eth2v2Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
+    else:
+        simulator = Eth2v1Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
 
     if 'none' in method:
         print('Empty table:')
@@ -79,7 +82,7 @@ def test_graph_table(txs, client='normal', method=['last', 'past'], past=[10], a
             print(simulator.info())
     
     if 'history' in method:
-        print("Partition with all history txs:")
+        print("Table updated with all history txs partition:")
         simulator.reset()
         account_table = {}
         graph = Graph() # empty graph
@@ -293,6 +296,7 @@ if __name__=='__main__':
     parser.add_argument('--start_time', type=str, default='2021-08-01 00:00:00')
     parser.add_argument('--end_time', type=str, default=None)
     parser.add_argument('--client', type=str, default='normal', choices=['normal', 'pry'])
+    parser.add_argument('--simulator', type=str, default='eth2v1', choices=['eth2v1', 'eth2v2'])
     args = parser.parse_args()
     print(args)
 
@@ -310,7 +314,7 @@ if __name__=='__main__':
                 'group':lambda:test_group_graph(txs, k=k, g=g, addr_len=addr_len, tx_rate=args.tx_rate),
                 'popular':lambda:test_popular_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=args.tx_rate, method=args.method, past=args.past),
                 'coarsen':lambda:test_coarsen_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=args.tx_rate),
-                'table':lambda:test_graph_table(txs, client=args.client, method=args.method, past=args.past, args=args)}
+                'table':lambda:test_graph_table(txs, client=args.client, simulator=args.simulator, method=args.method, past=args.past, args=args)}
 
     for func in args.funcs:
         func_dict[func]()

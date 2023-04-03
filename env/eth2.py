@@ -123,6 +123,8 @@ class Eth2v2Simulator(Eth2v1Simulator):
     def step(self, action):
         self.allocate.apply(action) # apply allocate action before txs arrives
         txs = self.client.next(time_interval=self.epoch_time).copy() # prepare new transactions
+        self.epoch_txs = txs
+        
         txs['from_shard'] = txs['from'].map(self.allocate.allocate) # from shard index
         txs['to_shard'] = txs['to'].map(self.allocate.allocate) # to shard index
 
@@ -165,8 +167,7 @@ class Eth2v2Simulator(Eth2v1Simulator):
                     if to_shard!=shard:
                         stx_forward[to_shard].append(tx)
             self.simulate_time += self.block_interval
-        self.next_txs = self.client.next(time_interval=self.epoch_time)
-        return self.client.done()
+        return self.client.done(time_interval=self.epoch_time)
 
 def min_max_scale(a, min_val=None, max_val=None):
     if min_val is None:

@@ -14,6 +14,7 @@ if __name__=='__main__':
     parser = argparse.ArgumentParser(description='test stack')
     parser.add_argument('--window', type=int, default=6)
     parser.add_argument('--step_size', type=int, default=20000)
+    parser.add_argument('--start_time', type=str, default='2021-08-01 00:00:00')
     args = parser.parse_args()
 
     window = args.window
@@ -21,9 +22,9 @@ if __name__=='__main__':
 
     print('Real data:')
     loader = get_default_dataloader()
-    blocks, txs = loader.load_data(start_time='2021-08-01 00:00:00')
+    blocks, txs = loader.load_data(start_time=args.start_time)
     drop_contract_creation_tx(txs)
-    for step in range(0, len(txs)-(window-1)*step_size, (window-1)*step_size):
+    for step in range(0, len(txs)-window*step_size, (window-1)*step_size):
         print('Step:', step)
         stxs = txs.iloc[step:step+window*step_size]
         print('Block number:', min(stxs.blockNumber), max(stxs.blockNumber), max(stxs.blockNumber)-min(stxs.blockNumber))

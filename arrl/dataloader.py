@@ -18,7 +18,7 @@ class DataLoader:
             if isinstance(t, int):
                 pass
             elif isinstance(t, str):
-                t = int(datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S').timestamp())
+                t = int(datetime.datetime.strptime(t, '%Y-%m-%d %H:%M:%S').timestamp())
             else:
                 raise TypeError(f"{t} is not an int or str")
             return t

@@ -39,6 +39,12 @@ class Client:
         txs = self.txs.iloc[self.ptx-self.tx_rate*time_interval:self.ptx]
         return txs
 
+class EasyClient(Client):
+    def __init__(self, txs, tx_rate=1000, account_set=None, edge_set=None):
+        super().__init__(txs=txs, tx_rate=tx_rate)
+        self.edge_set = edge_set
+
+
 class PryClient(Client):
     def __init__(self, txs, tx_rate=1000, n_shards=1, account_table=None):
         super().__init__(txs=txs, tx_rate=tx_rate)
@@ -49,6 +55,10 @@ class PryClient(Client):
         self.account_table = account_table
         # a map from origin account addr to [shard_id | addr] format account
         self.account_map = {}
+    
+    def reset(self, ptx=0):
+        self.account_map = {}
+        return super().reset(ptx=ptx)
 
     def combine_addr(self, shard_id, addr):
         prefix = self.format_shard_id.format(shard_id)
