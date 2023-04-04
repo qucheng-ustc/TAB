@@ -30,20 +30,20 @@ class PartitionAccountAllocate(AccountAllocate):
     def __init__(self, n_shards, fallback=None):
         # fallback: return fallback.allocate if failed to allocate
         super().__init__(n_shards)
-        self.account_idx = None
+        self.account_table = None
         self.fallback = fallback
 
     def apply(self, action):
         #action is a tuple (account list, partition result)
-        self.account_idx, self.part = action
-        if not isinstance(self.account_idx, pd.Index):
-            self.account_idx = pd.Index(self.account_idx)
+        self.account_table = {a:s for a,s in zip(*action)}
+
+    def reset(self):
+        self.account_table = None
 
     def allocate(self, addr):
-        if self.account_idx is not None:
-            idx = self.account_idx.get_indexer([addr])[0]
-            if idx>=0:
-                return self.part[idx]
+        if self.account_table is not None:
+            if addr in self.account_table:
+                return self.account_table[addr]
         # failed to allocate addr, addr not in the account list
         if self.fallback:
             return self.fallback.allocate(addr)

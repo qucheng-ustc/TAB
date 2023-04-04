@@ -94,7 +94,12 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
             account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
         print(simulator.info())
 
-def test_graph(txs, client='normal', n_shards=8, tx_rate=100, method=['all', 'last', 'past', 'current', 'history'], past=[100], n_blocks=10, tx_per_block=200, block_interval=15):
+def test_graph(txs, client='normal', simulator='eth2v1', method=['all', 'last', 'past', 'current', 'history'], past=[100], args=None):
+    n_shards = args.n_shards
+    n_blocks = args.n_blocks
+    tx_rate = args.tx_rate
+    tx_per_block = args.tx_per_block
+    block_interval = args.block_interval
     print('Account Graph:')
     txs = txs[['from','to','gas']]
     graph_path = './metis/graphs/test_graph.txt'
@@ -104,7 +109,10 @@ def test_graph(txs, client='normal', n_shards=8, tx_rate=100, method=['all', 'la
         client = PryClient(txs=txs, tx_rate=tx_rate, n_shards=n_shards, account_table={})
     else:
         client = Client(txs=txs, tx_rate=tx_rate)
-    simulator = Eth2v1Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
+    if simulator=='eth2v2':
+        simulator = Eth2v2Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
+    else:
+        simulator = Eth2v1Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
 
     if 'none' in method:
         print('No partition:')
@@ -310,11 +318,12 @@ if __name__=='__main__':
     n_groups = 1 << g
     args.n_shards = n_shards
 
-    func_dict = {'graph':lambda:test_graph(txs, client=args.client, n_shards=n_shards, tx_rate=args.tx_rate, method=args.method, past=args.past, n_blocks=args.n_blocks, tx_per_block=args.tx_per_block),
-                'group':lambda:test_group_graph(txs, k=k, g=g, addr_len=addr_len, tx_rate=args.tx_rate),
-                'popular':lambda:test_popular_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=args.tx_rate, method=args.method, past=args.past),
-                'coarsen':lambda:test_coarsen_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=args.tx_rate),
-                'table':lambda:test_graph_table(txs, client=args.client, simulator=args.simulator, method=args.method, past=args.past, args=args)}
+    func_dict = {
+        'graph':lambda:test_graph(txs, client=args.client, simulator=args.simulator, method=args.method, past=args.past, args=args),
+        'group':lambda:test_group_graph(txs, k=k, g=g, addr_len=addr_len, tx_rate=args.tx_rate),
+        'popular':lambda:test_popular_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=args.tx_rate, method=args.method, past=args.past),
+        'coarsen':lambda:test_coarsen_graph(txs, n_shards=n_shards, n_groups=n_groups, tx_rate=args.tx_rate),
+        'table':lambda:test_graph_table(txs, client=args.client, simulator=args.simulator, method=args.method, past=args.past, args=args)}
 
     for func in args.funcs:
         func_dict[func]()

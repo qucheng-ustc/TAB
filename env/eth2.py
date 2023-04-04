@@ -26,8 +26,6 @@ class Eth2v1Simulator:
     def reset(self, ptx=0):
         self.allocate.reset()
         self.client.reset(ptx=ptx)
-        self.n_cross_tx = 0
-        self.n_inner_tx = 0
         self.simulate_time = 0
 
         self.stx_pool = [deque() for _ in range(self.n_shards)]
@@ -45,10 +43,6 @@ class Eth2v1Simulator:
         
         txs['from_shard'] = txs['from'].map(self.allocate.allocate) # from shard index
         txs['to_shard'] = txs['to'].map(self.allocate.allocate) # to shard index
-
-        counts = (txs['from_shard'] == txs['to_shard']).value_counts()
-        self.n_inner_tx += counts.get(True, default=0)
-        self.n_cross_tx += counts.get(False, default=0)
 
         for from_shard, tx in txs.groupby('from_shard'):
             #txs store in tuple: (from_addr, to_addr, gas, from_shard, to_shard)
@@ -124,13 +118,11 @@ class Eth2v1Simulator:
             n_block = n_block,
             target_n_block = self.n_shards*self.simulate_time/self.block_interval,
             n_tx = n_tx,
-            n_inner_tx = self.n_inner_tx,
-            n_cross_tx = self.n_cross_tx,
-            prop_cross_tx = float(self.n_cross_tx) / n_tx if n_tx>0 else 0,
             n_block_tx = n_block_tx,
             n_block_out_tx = n_block_out_tx,
             n_block_forward_tx = n_block_forward_tx,
             n_block_inner_tx = n_block_inner_tx,
+            prop_cross_tx = n_block_out_tx / (n_block_out_tx+n_block_inner_tx) if n_block_tx>0 else 0,
             throughput = n_block_tx/self.simulate_time if self.simulate_time>0 else 0,
             actual_throughput = (n_block_inner_tx+n_block_forward_tx)/self.simulate_time if self.simulate_time>0 else 0,
             target_throughput = self.tx_per_block*self.n_shards/self.block_interval,
@@ -149,13 +141,6 @@ class Eth2v2Simulator(Eth2v1Simulator):
         txs = self.client.next(time_interval=self.epoch_time).copy() # prepare new transactions
         self.epoch_txs = txs
         
-        txs['from_shard'] = txs['from'].map(self.allocate.allocate) # from shard index
-        txs['to_shard'] = txs['to'].map(self.allocate.allocate) # to shard index
-
-        counts = (txs['from_shard'] == txs['to_shard']).value_counts()
-        self.n_inner_tx += counts.get(True, default=0)
-        self.n_cross_tx += counts.get(False, default=0)
-
         # re-allocate tx pool
         stx_pool = [deque() for i in range(self.n_shards)]
         stx_forward = [deque() for i in range(self.n_shards)]
@@ -175,9 +160,11 @@ class Eth2v2Simulator(Eth2v1Simulator):
         for slot_ptx in range(0, len(txs), self.tx_count):
             # in each time slot, tx_rate new transactions arrived
             slot_txs = txs.iloc[slot_ptx: min(slot_ptx+self.tx_count, len(txs))]
-            for from_shard, tx in slot_txs.groupby('from_shard'):
-                #txs store in tuple: (from_addr, to_addr, gas, from_shard, to_shard)
-                stx_pool[from_shard].extend(tx.itertuples(index=False, name=None))
+            for from_addr, to_addr, gas in slot_txs.itertuples(index=False, name=None):
+                from_shard = self.allocate.allocate(from_addr)
+                to_shard = self.allocate.allocate(to_addr)
+                #tx store in tuple: (from_addr, to_addr, gas, from_shard, to_shard)
+                stx_pool[from_shard].append((from_addr, to_addr, gas, from_shard, to_shard))
             # each shard produce one block
             for shard, (tx_pool, tx_forward) in enumerate(zip(stx_pool, stx_forward)):
                 n_forward = min(len(tx_forward), self.tx_per_block)
@@ -198,14 +185,6 @@ class Eth2v3Simulator(Eth2v1Simulator):
         self.allocate.apply(action) # apply allocate action before txs arrives
         txs = self.client.next(time_interval=self.epoch_time).copy() # prepare new transactions
         self.epoch_txs = txs
-        
-        txs['from_shard'] = txs['from'].map(self.allocate.allocate) # from shard index
-        txs['to_shard'] = txs['to'].map(self.allocate.allocate) # to shard index
-
-        counts = (txs['from_shard'] == txs['to_shard']).value_counts()
-        self.n_inner_tx += counts.get(True, default=0)
-        self.n_cross_tx += counts.get(False, default=0)
-
         # re-allocate tx pool
         stx_pool = [deque() for i in range(self.n_shards)]
         stx_forward = [deque() for i in range(self.n_shards)]
