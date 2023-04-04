@@ -68,6 +68,30 @@ class Eth2v1Simulator:
 
         return self.client.done(time_interval=self.epoch_time)
 
+    def block_height(self):
+        return max([len(blocks) for blocks in self.sblock])
+
+    def get_block_txs(self, start, end=None):
+        block_height = self.block_height()
+        if start<0:
+            start = block_height - start
+        if end is not None:
+            if end<0:
+                end = block_height - end
+        else:
+            end = block_height
+        assert(start>=0 and start<block_height)
+        assert(end>=0 and end<=block_height)
+        txs = []
+        for blocks in self.sblock:
+            for block in blocks[start:end]:
+                for from_addr, to_addr, gas, from_shard, to_shard in block:
+                    txs.append((from_addr, to_addr))
+        return txs
+    
+    def get_tx_pool(self):
+        return self.stx_pool
+
     def info(self):
         n_tx = self.client.n_tx()
         n_block = 0
@@ -120,6 +144,56 @@ class Eth2v1Simulator:
         return result
 
 class Eth2v2Simulator(Eth2v1Simulator):
+    def step(self, action):
+        self.allocate.apply(action) # apply allocate action before txs arrives
+        txs = self.client.next(time_interval=self.epoch_time).copy() # prepare new transactions
+        self.epoch_txs = txs
+        
+        txs['from_shard'] = txs['from'].map(self.allocate.allocate) # from shard index
+        txs['to_shard'] = txs['to'].map(self.allocate.allocate) # to shard index
+
+        counts = (txs['from_shard'] == txs['to_shard']).value_counts()
+        self.n_inner_tx += counts.get(True, default=0)
+        self.n_cross_tx += counts.get(False, default=0)
+
+        # re-allocate tx pool
+        stx_pool = [deque() for i in range(self.n_shards)]
+        stx_forward = [deque() for i in range(self.n_shards)]
+        for shard, (tx_pool, tx_forward) in enumerate(zip(self.stx_pool, self.stx_forward)):
+            for from_addr, to_addr, gas, _, _ in tx_pool:
+                from_shard = self.allocate.allocate(from_addr)
+                to_shard = self.allocate.allocate(to_addr)
+                stx_pool[from_shard].append((from_addr, to_addr, gas, from_shard, to_shard))
+            for from_addr, to_addr, gas, _, _ in tx_forward:
+                from_shard = self.allocate.allocate(from_addr)
+                to_shard = self.allocate.allocate(to_addr)
+                stx_forward[to_shard].append((from_addr, to_addr, gas, from_shard, to_shard))
+        self.stx_pool = stx_pool
+        self.stx_forward = stx_forward
+
+        # start simulation
+        for slot_ptx in range(0, len(txs), self.tx_count):
+            # in each time slot, tx_rate new transactions arrived
+            slot_txs = txs.iloc[slot_ptx: min(slot_ptx+self.tx_count, len(txs))]
+            for from_shard, tx in slot_txs.groupby('from_shard'):
+                #txs store in tuple: (from_addr, to_addr, gas, from_shard, to_shard)
+                stx_pool[from_shard].extend(tx.itertuples(index=False, name=None))
+            # each shard produce one block
+            for shard, (tx_pool, tx_forward) in enumerate(zip(stx_pool, stx_forward)):
+                n_forward = min(len(tx_forward), self.tx_per_block)
+                n_pool = min(len(tx_pool), self.tx_per_block-n_forward)
+                block_txs = [tx_forward.popleft() for _ in range(n_forward)]+[tx_pool.popleft() for _ in range(n_pool)]
+                self.sblock[shard].append(block_txs)
+            # cross shard tx forward to target shard in next timeslot
+            for shard, blocks in enumerate(self.sblock):
+                for tx in blocks[-1]:
+                    to_shard = tx[4]
+                    if to_shard!=shard:
+                        stx_forward[to_shard].append(tx)
+            self.simulate_time += self.block_interval
+        return self.client.done(time_interval=self.epoch_time)
+
+class Eth2v3Simulator(Eth2v1Simulator):
     def step(self, action):
         self.allocate.apply(action) # apply allocate action before txs arrives
         txs = self.client.next(time_interval=self.epoch_time).copy() # prepare new transactions

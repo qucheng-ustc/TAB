@@ -127,7 +127,7 @@ def test_graph(txs, client='normal', n_shards=8, tx_rate=100, method=['all', 'la
         print("Partition with current step txs:")
         simulator.reset()
         for _ in tqdm(range(simulator.max_epochs)):
-            graph = Graph(simulator.next_txs).save(graph_path)
+            graph = Graph(client.next(simulator.epoch_time, peek=True)).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
             done = simulator.step((graph.vertex_idx, parts))
             if done: break

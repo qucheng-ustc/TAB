@@ -34,7 +34,7 @@ class DataLoader:
         else:
             sql = "select * from block where timestamp>=%d and timestamp<=%d"%(start_time, end_time)
         cursor.execute(sql)
-        print(sql)
+        print(sql, end=' : ')
         data = cursor.fetchall()
         df_block = pd.DataFrame(data, columns=['blockNumber','gasLimit','gasUsed','transactionNumber','timestamp'])
         print(len(df_block))
@@ -42,7 +42,7 @@ class DataLoader:
             sql = "select * from tx where block_number>=%d"%df_block.iloc[0,0]
         else:
             sql = "select * from tx where block_number>=%d and block_number<=%d"%(df_block.iloc[0,0],df_block.iloc[-1,0])
-        print(sql)
+        print(sql, end=' : ')
         cursor.execute(sql)
         data = cursor.fetchall()
         df_tx = pd.DataFrame(data, columns=['blockNumber','transactionIndex','from','to','gas'])
