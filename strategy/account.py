@@ -73,29 +73,29 @@ class DirectAccountAllocate(AccountAllocate):
     def allocate(self, addr):
         return addr
 
-# allocate a double account that contains two addr, allocate addr[0] first, if failed then allocate addr[1]
+# allocate an account that contains a combined addr (addr[0], addr[1])
+# this strategy will try to allocate the combined addr (addr[0], addr[1]) with base strategy first
+# if failed, it will allocate addr[0] with its fallback strategy instead
 class DoubleAccountAllocate(AccountAllocate):
-    def __init__(self, n_shards, base, fallback=None):
-        # base: allocate strategy to allocate each addr, either a single AccountAllocate or a tuple (AccountAllocate, AccountAllocate)
-        # fallback: return fallback.allocate if failed to allocate
+    def __init__(self, n_shards, base, fallback):
+        # base: allocate strategy to allocate the combined addr (addr[0], addr[1])
+        # fallback: allocate strategy to allocate the single addr addr[0]
         super().__init__(n_shards)
-        if isinstance(base, tuple):
-            self.base = base
-        else:
-            self.base = (base, base)
+        self.base = base
         self.fallback = fallback
     
-    # to apply different action to each allocator, use self.base[0].apply|self.base[1].apply
+    def reset(self):
+        self.base.reset()
+        self.fallback.reset()
+    
+    # apply action on base strategy
     def apply(self, action):
-        self.base[0].apply(action=action)
-        if id(self.base[0])!=id(self.base[1]):
-            self.base[1].apply(action=action)
+        # action is a tuple for base, fallback strategies
+        self.base.apply(action=action[0])
+        self.fallback.apply(action=action[1])
 
     def allocate(self, addr):
-        ret = self.base.allocate(addr[0])
+        ret = self.base.allocate(addr)
         if ret!=-1:
             return ret
-        ret = self.base.allocate(addr[1])
-        if ret!=-1:
-            return ret
-        return self.fallback.allocate(addr)
+        return self.fallback.allocate(addr[0])

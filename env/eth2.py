@@ -65,23 +65,26 @@ class Eth2v1Simulator:
     def block_height(self):
         return max([len(blocks) for blocks in self.sblock])
 
-    def get_block_txs(self, start, end=None):
+    def get_block_txs(self, start=0, end=None):
         block_height = self.block_height()
         if start<0:
-            start = block_height - start
+            start = block_height + start
         if end is not None:
             if end<0:
-                end = block_height - end
+                end = block_height + end
         else:
             end = block_height
-        assert(start>=0 and start<block_height)
-        assert(end>=0 and end<=block_height)
+        if start<0: start = 0
+        if end<0: end = 0
+        assert(start<block_height)
+        assert(end<=block_height)
         txs = []
-        for blocks in self.sblock:
-            for block in blocks[start:end]:
+        for shard,blocks in enumerate(self.sblock):
+            for block_id,block in enumerate(blocks[start:end]):
                 for from_addr, to_addr, gas, from_shard, to_shard in block:
-                    txs.append((from_addr, to_addr))
-        return txs
+                    if from_shard == shard: # only return inner txs and out txs
+                        txs.append((shard, block_id+start, from_addr, to_addr))
+        return pd.DataFrame(txs, columns=['shard', 'block', 'from','to'])
     
     def get_tx_pool(self):
         return self.stx_pool

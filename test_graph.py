@@ -64,7 +64,7 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
         for _ in tqdm(range(simulator.max_epochs)):
             done = simulator.step(account_table)
             if done: break
-            graph = Graph(simulator.epoch_txs).save(graph_path)
+            graph = Graph(simulator.get_block_txs(-simulator.n_blocks)).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
             account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
         print(simulator.info())
@@ -72,13 +72,14 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
     if 'past' in method:
         for past_step in past:
             print(f"Table updated by past {past_step} steps partition:")
-            simulator.reset(ptx=past_step*simulator.epoch_tx_count)
+            simulator.reset()
+            account_table = {}
             for _ in tqdm(range(simulator.max_epochs)):
-                graph = Graph(simulator.client.past(past_step*simulator.epoch_time)).save(graph_path)
-                parts = Partition(graph_path).partition(n_shards)
-                account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
                 done = simulator.step(account_table)
                 if done: break
+                graph = Graph(simulator.get_block_txs(-simulator.n_blocks*past_step)).save(graph_path)
+                parts = Partition(graph_path).partition(n_shards)
+                account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
             print(simulator.info())
     
     if 'history' in method:
@@ -89,7 +90,7 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
         for epoch in tqdm(range(simulator.max_epochs)):
             done = simulator.step(account_table)
             if done: break
-            graph = graph.update(simulator.epoch_txs).save(graph_path)
+            graph = graph.update(simulator.get_block_txs(-simulator.n_blocks)).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
             account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
         print(simulator.info())

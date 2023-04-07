@@ -9,21 +9,8 @@ from statsmodels.tools.eval_measures import mse
 
 from graph.stack import GraphStack
 
-if __name__=='__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description='test stack')
-    parser.add_argument('--window', type=int, default=6)
-    parser.add_argument('--step_size', type=int, default=20000)
-    parser.add_argument('--start_time', type=str, default='2021-08-01 00:00:00')
-    args = parser.parse_args()
-
-    window = args.window
-    step_size = args.step_size
-
+def test_stack_pred(txs, window, step_size):
     print('Real data:')
-    loader = get_default_dataloader()
-    blocks, txs = loader.load_data(start_time=args.start_time)
-    drop_contract_creation_tx(txs)
     for step in range(0, len(txs)-window*step_size, (window-1)*step_size):
         print('Step:', step)
         stxs = txs.iloc[step:step+window*step_size]
@@ -54,3 +41,32 @@ if __name__=='__main__':
     ols = sm.OLS(endog, exog)
     res = ols.fit()
     print(res.summary())
+
+def test_stack_update(txs, step_size):
+    print('Test stack update:')
+    hgraph = GraphStack()
+    for step in range(0, len(txs), step_size):
+        print('Step:', step)
+        stxs = txs.iloc[step:min(step+step_size,len(txs))]
+        print('Block number:', min(stxs.blockNumber), max(stxs.blockNumber), max(stxs.blockNumber)-min(stxs.blockNumber))
+        block_txs = pd.DataFrame({'block':np.repeat(step, len(stxs)), 'from':stxs['from'], 'to':stxs['to']})
+        hgraph.update(block_txs, debug=True)
+
+if __name__=='__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='test stack')
+    parser.add_argument('--window', type=int, default=6)
+    parser.add_argument('--step_size', type=int, default=20000)
+    parser.add_argument('--start_time', type=str, default='2021-08-01 00:00:00')
+    parser.add_argument('--end_time', type=str, default=None)
+    parser.add_argument('type', type=str, default='pred', choices=['pred', 'update'])
+    args = parser.parse_args()
+
+    loader = get_default_dataloader()
+    blocks, txs = loader.load_data(start_time=args.start_time, end_time=args.end_time)
+    drop_contract_creation_tx(txs)
+
+    if args.type == 'update':
+        test_stack_update(txs=txs, step_size=args.step_size)
+    else:
+        test_stack_pred(txs=txs, window=args.window, step_size=args.step_size)
