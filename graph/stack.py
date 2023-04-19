@@ -31,7 +31,7 @@ class GraphStack:
             self.size = 0
         else:
             blocks = block_txs['block'].unique()
-            self.size = len(self.blocks)
+            self.size = len(blocks)
             if debug:
                 print('Blocks:', min(blocks),'~', max(blocks), ' Size:', self.size)
             vertex_idx_from = pd.Index(block_txs['from'].unique())
@@ -136,6 +136,9 @@ class GraphStack:
         new_weight_layer_min = spm_col_min(new_weight_matrix)
         print('weights min:', weight_layer_min, 'new weights min:', new_weight_layer_min)
     
+    def dequeue(self, n_blocks=1, debug=False):
+        pass
+
     def update(self, block_txs, debug=False):
         blocks = block_txs['block'].unique()
         size = len(blocks)
