@@ -297,6 +297,7 @@ if __name__=='__main__':
     parser.add_argument('--method', type=str, nargs='*', choices=['none', 'all', 'last', 'past', 'current', 'history'], default=['all'])
     parser.add_argument('--past', type=int, nargs='*', default=[20]) # list of number of past steps
     parser.add_argument('-k', '--k', type=int, default=3)
+    parser.add_argument('--n_shards', type=int, default=0)
     parser.add_argument('-g', '--g', type=int, default=10)
     parser.add_argument('--tx_rate', type=int, default=100)
     parser.add_argument('--n_blocks', type=int, default=10) # number of blocks per step
@@ -315,9 +316,12 @@ if __name__=='__main__':
 
     k = args.k
     g = args.g
-    n_shards = 1 << k
     n_groups = 1 << g
-    args.n_shards = n_shards
+    if args.n_shards==0:
+        n_shards = 1 << k
+        args.n_shards = n_shards
+    else:
+        n_shards = args.n_shards
 
     func_dict = {
         'graph':lambda:test_graph(txs, client=args.client, simulator=args.simulator, method=args.method, past=args.past, args=args),

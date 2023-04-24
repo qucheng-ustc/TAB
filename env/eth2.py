@@ -81,10 +81,10 @@ class Eth2v1Simulator:
         txs = []
         for shard,blocks in enumerate(self.sblock):
             for block_id,block in enumerate(blocks[start:end]):
-                for from_addr, to_addr, gas, from_shard, to_shard in block:
+                for from_addr, to_addr, _, from_shard, _ in block:
                     if from_shard == shard: # only return inner txs and out txs
                         txs.append((shard, block_id+start, from_addr, to_addr))
-        return pd.DataFrame(txs, columns=['shard', 'block', 'from','to'])
+        return pd.DataFrame(txs, columns=['shard', 'block', 'from', 'to'])
     
     def get_tx_pool(self):
         return self.stx_pool
@@ -188,6 +188,7 @@ class Eth2v3Simulator(Eth2v1Simulator):
         self.allocate.apply(action) # apply allocate action before txs arrives
         txs = self.client.next(time_interval=self.epoch_time).copy() # prepare new transactions
         self.epoch_txs = txs
+        
         # re-allocate tx pool
         stx_pool = [deque() for i in range(self.n_shards)]
         stx_forward = [deque() for i in range(self.n_shards)]
@@ -204,12 +205,15 @@ class Eth2v3Simulator(Eth2v1Simulator):
         self.stx_forward = stx_forward
 
         # start simulation
-        for slot_ptx in range(0, len(txs), self.tx_count):
-            # in each time slot, tx_rate new transactions arrived
-            slot_txs = txs.iloc[slot_ptx: min(slot_ptx+self.tx_count, len(txs))]
-            for from_shard, tx in slot_txs.groupby('from_shard'):
-                #txs store in tuple: (from_addr, to_addr, gas, from_shard, to_shard)
-                stx_pool[from_shard].extend(tx.itertuples(index=False, name=None))
+        for _ in range(self.n_blocks):
+            slot_txs = self.client.next(time_interval=self.block_interval)
+            timestamp = self.simulate_time
+            for from_addr, to_addr, gas in slot_txs.itertuples(index=False, name=None):
+                from_shard = self.allocate.allocate(from_addr)
+                to_shard = self.allocate.allocate(to_addr)
+                #tx store in tuple: (from_addr, to_addr, timestamp, from_shard, to_shard)
+                stx_pool[from_shard].append((from_addr, to_addr, timestamp, from_shard, to_shard))
+                timestamp += 1./self.tx_rate
             # each shard produce one block
             for shard, (tx_pool, tx_forward) in enumerate(zip(stx_pool, stx_forward)):
                 n_forward = min(len(tx_forward), self.tx_per_block)
@@ -224,6 +228,71 @@ class Eth2v3Simulator(Eth2v1Simulator):
                         stx_forward[to_shard].append(tx)
             self.simulate_time += self.block_interval
         return self.client.done(time_interval=self.epoch_time)
+    
+    def info(self):
+        n_tx = self.client.n_tx()
+        n_block = 0
+        n_block_tx = 0
+        n_block_out_tx = 0
+        n_block_forward_tx = 0
+        n_block_inner_tx = 0
+        tx_wasted = [0 for _ in range(self.n_shards)]
+        block_time = 0.
+        tx_delay = []
+        for shard, blocks in enumerate(self.sblock):
+            block_time += self.block_interval
+            n_block += len(blocks)
+            for block in blocks:
+                n_block_tx += len(block)
+                for _, _, timestamp, from_shard, to_shard in block:
+                    if to_shard!=shard:
+                        n_block_out_tx += 1
+                    elif from_shard==shard:
+                        n_block_inner_tx += 1
+                        tx_delay.append(block_time-timestamp)
+                    else:
+                        n_block_forward_tx += 1
+                        tx_delay.append(block_time-timestamp)
+                tx_wasted[shard] += self.tx_per_block - len(block)
+        n_wasted = sum(tx_wasted)
+
+        result = dict(
+            n_shards = self.n_shards,
+            blocks_per_epoch = self.n_blocks,
+            tx_rate = self.tx_rate,
+            tx_per_block = self.tx_per_block,
+            block_interval = self.block_interval,
+            simulate_time = self.simulate_time,
+            n_block = n_block,
+            target_n_block = self.n_shards*self.simulate_time/self.block_interval,
+            n_tx = n_tx,
+            n_block_tx = n_block_tx,
+            n_block_out_tx = n_block_out_tx,
+            n_block_forward_tx = n_block_forward_tx,
+            n_block_inner_tx = n_block_inner_tx,
+            prop_cross_tx = n_block_out_tx / (n_block_out_tx+n_block_inner_tx) if n_block_tx>0 else 0,
+            throughput = n_block_tx/self.simulate_time if self.simulate_time>0 else 0,
+            actual_throughput = (n_block_inner_tx+n_block_forward_tx)/self.simulate_time if self.simulate_time>0 else 0,
+            target_throughput = self.tx_per_block*self.n_shards/self.block_interval,
+            tx_pool_length = [len(pool) for pool in self.stx_pool],
+            tx_forward_length = [len(forward) for forward in self.stx_forward],
+            n_wasted = n_wasted,
+            tx_wasted = tx_wasted,
+            prop_wasted = float(n_wasted) / (n_block * self.tx_per_block),
+            complete_txs = len(tx_delay),
+            tx_delay = sum(tx_delay)/len(tx_delay)
+        )
+        result['prop_throughput'] = float(result['actual_throughput'])/result['target_throughput']
+        result['pool_length_mean'] = np.average(result['tx_pool_length'])
+        result['pool_length_std'] = np.std(result['tx_pool_length'])
+        result['forward_length_mean'] = np.average(result['tx_forward_length'])
+        result['forward_length_std'] = np.std(result['tx_forward_length'])
+        result['tx_pending_length'] = [p+f for p,f in zip(result['tx_pool_length'],result['tx_forward_length'])]
+        result['pending_length_mean'] = np.average(result['tx_pending_length'])
+        result['pending_length_std'] = np.std(result['tx_pending_length'])
+        result['wasted_mean'] = np.average(result['tx_wasted'])
+        result['wasted_std'] = np.std(result['tx_wasted'])
+        return result
 
 def min_max_scale(a, min_val=None, max_val=None):
     if min_val is None:

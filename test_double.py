@@ -4,7 +4,7 @@ from arrl.preprocess import drop_contract_creation_tx
 from graph.graph import Graph
 from graph.partition import Partition
 from strategy.account import StaticAccountAllocate, TableAccountAllocate, DoubleAccountAllocate
-from env.eth2 import Eth2v2Simulator
+from env.eth2 import Eth2v3Simulator
 from env.client import DoubleAddrClient
 
 def test_double(txs, method=['last', 'past'], past=[10], args=None):
@@ -20,7 +20,7 @@ def test_double(txs, method=['last', 'past'], past=[10], args=None):
     allocator = DoubleAccountAllocate(n_shards=n_shards, base=base_allocator, fallback=fallback_allocator)
     txs = txs[['from','to','gas']]
     client = DoubleAddrClient(txs=txs, tx_rate=tx_rate)
-    simulator = Eth2v2Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
+    simulator = Eth2v3Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
 
     if 'none' in method:
         print('Empty table:')
@@ -96,12 +96,11 @@ if __name__=='__main__':
     parser.add_argument('--method', type=str, nargs='*', choices=['none', 'all', 'last', 'past', 'current', 'history'], default=['all'])
     parser.add_argument('--past', type=int, nargs='*', default=[20]) # list of number of past steps
     args = parser.parse_args()
+    if args.n_shards==0: args.n_shards = 1 << args.k
     print(args)
 
     loader = get_default_dataloader()
     _, txs = loader.load_data(start_time=args.start_time, end_time=args.end_time)
     drop_contract_creation_tx(txs)
-
-    args.n_shards = 1 << args.k
 
     test_double(txs, method=args.method, past=args.past, args=args)
