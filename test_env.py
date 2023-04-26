@@ -1,5 +1,5 @@
 from arrl.dataset import Dataset
-from env import Eth2v1
+from env.gym import Eth2v1
 
 if __name__=='__main__':
     dataset = Dataset(start_time='2021-08-01 00:00:00')

@@ -1,7 +1,7 @@
 # Import the RL algorithm (Algorithm) we would like to use.
 import ray
 from ray.rllib.algorithms.pg import PG
-from env import Eth2v1
+from env.gym import Eth2v1
 from arrl.dataset import Dataset
 from strategy import GroupAllocateStrategy
 import utils
