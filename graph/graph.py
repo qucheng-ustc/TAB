@@ -3,9 +3,11 @@ import pandas as pd
 import collections
 import itertools
 
+# Undirected graph with edge weights and vertex weights(Optional)
 class Graph:
-    def __init__(self, txs=None, debug=False):
+    def __init__(self, txs=None, v_weight=True, debug=False):
         self.txs = txs
+        self.v_weight = v_weight
         if txs is None or len(txs)==0:
             vertex_idx = pd.Index([],dtype=object)
         else:
@@ -23,12 +25,12 @@ class Graph:
         for index, addr_from, addr_to in txs.itertuples():
             v_from = self.vertex_idx.get_loc(addr_from)
             v_to = self.vertex_idx.get_loc(addr_to)
-            self._add_edge(v_from, v_to)
+            self._add_edge(v_from, v_to, 1, self.v_weight)
         if debug:
             print('Edge:', self.n_edge)
             if self.n_edge>0:
                 print('weight: max', max(self.weights.values()), ' min', min(self.weights.values()), ' avg', np.average(list(self.weights.values())), ' sum', sum(self.weights.values()))
-            if self.n_vertex>0:
+            if self.v_weight and self.n_vertex>0:
                 print('v_weight: max', max(self.v_weights), ' min', min(self.v_weights), ' avg', np.average(self.v_weights), ' sum', sum(self.v_weights))
     
     def _init(self, vertex_idx):
@@ -37,7 +39,8 @@ class Graph:
         self.n_edge = 0
         self.nexts = dict()
         self.weights = dict()
-        self.v_weights = np.zeros(shape=self.n_vertex, dtype=int)
+        if self.v_weight:
+            self.v_weights = np.zeros(shape=self.n_vertex, dtype=int)
         
     def _add_edge(self, v_from, v_to, weight=1, v_weight=True):
         if v_from > v_to:
@@ -68,31 +71,46 @@ class Graph:
         self.n_vertex = len(self.vertex_idx)
         if debug:
             print('Updated vertex:', len(self.vertex_idx), ' New vertex:', len(new_vertex_idx))
-        self.v_weights.resize(len(self.vertex_idx))
+        if self.v_weight:
+            self.v_weights.resize(len(self.vertex_idx))
         txs = txs[['from', 'to']]
         for index, addr_from, addr_to in txs.itertuples():
             v_from = self.vertex_idx.get_loc(addr_from)
             v_to = self.vertex_idx.get_loc(addr_to)
-            self._add_edge(v_from, v_to)
+            self._add_edge(v_from, v_to, 1, self.v_weight)
         if debug:
             print('Updated edge:', self.n_edge)
             print('Max weight:', max(self.weights.values()), ' Min weight:', min(self.weights.values()), ' Avg weight:', np.average(list(self.weights.values())))
-            print('Max v_weight:', max(self.v_weights), ' Min v_weight:', min(self.v_weights), 'Avg v_weight:', np.average(self.v_weights))
+            if self.v_weight:
+                print('Max v_weight:', max(self.v_weights), ' Min v_weight:', min(self.v_weights), 'Avg v_weight:', np.average(self.v_weights))
+        return self
+    
+    # replace/add v_weights to current graph, vertex_idx must be the same
+    def set_vweight(self, vertex_idx, v_weights):
+        assert((vertex_idx==self.vertex_idx).all())
+        self.v_weights = v_weights
         return self
 
-    def save(self, path):
+    def save(self, path, v_weight=None):
+        if v_weight is None:
+            v_weight = self.v_weight
         self.save_path = path
         with open(path, 'w') as f:
-            f.write(f'{self.n_vertex} {self.n_edge} 011\n')
+            format = '011' if v_weight else '001'
+            f.write(f'{self.n_vertex} {self.n_edge} {format}\n')
             for v in range(self.n_vertex):
-                f.write(f'{self.v_weights[v]}')
+                space = ''
+                if v_weight:
+                    f.write(f'{self.v_weights[v]}')
+                    space = ' '
                 for v_next in self.nexts.get(v, []):
                     if v < v_next:
                         v_from, v_to = v, v_next
                     else:
                         v_from, v_to = v_next, v
                     weight = self.weights[(v_from, v_to)]
-                    f.write(f' {v_next+1} {weight}')
+                    f.write(f'{space}{v_next+1} {weight}')
+                    space = ' '
                 f.write('\n')
         return self
 

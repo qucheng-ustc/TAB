@@ -6,7 +6,8 @@ from graph.graph import Graph, GroupGraph, PopularGroupGraph, CoarsenGraph
 from graph.partition import Partition
 from strategy.account import StaticAccountAllocate, PartitionAccountAllocate, TableAccountAllocate
 from strategy.allocate import GroupAllocateStrategy
-from env.eth2 import Eth2v1Simulator, Eth2v1, Eth2v2Simulator
+from env.eth2 import Eth2v1Simulator, Eth2v2Simulator
+from env.gym import Eth2v1, Eth2v2
 from env.client import Client, PryClient
 
 def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', 'past'], past=[10], args=None):

@@ -14,3 +14,4 @@ __pycache__
 /metis
 /.ipynb_checkpoints
 /.vscode
+*.log

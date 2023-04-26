@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.neural_network import MLPRegressor
-from utils import rolling_window
+from .utils import rolling_window
 from tqdm import tqdm
 
 class AverageModel:
@@ -9,7 +9,7 @@ class AverageModel:
         return np.average(X, axis=1)
 
 class MLPModel:
-    def __init__(self, max_memory=1<<36):
+    def __init__(self, max_memory=1<<35):
         self.model = MLPRegressor()
         self.max_memory = max_memory
     def fit(self, data, window=5):
@@ -30,7 +30,7 @@ class MLPModel:
         return self.model.score(X, y)
 
 class LRModel:
-    def __init__(self, max_memory=1<<36):
+    def __init__(self, max_memory=1<<35):
         self.model = LogisticRegression(fit_intercept=False)
         self.max_memory = max_memory
     def fit(self, data, window=5):

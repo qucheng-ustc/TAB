@@ -24,8 +24,7 @@ def spm_col_min(spm):
     return cmin
 
 class GraphStack:
-    def __init__(self, block_txs=None, debug=False):
-        self.block_txs = block_txs
+    def __init__(self, block_txs=None, combine=False, debug=False):
         if block_txs is None:
             vertex_idx = pd.Index([],dtype=object)
             self.size = 0
@@ -137,6 +136,7 @@ class GraphStack:
         print('weights min:', weight_layer_min, 'new weights min:', new_weight_layer_min)
     
     def dequeue(self, n_blocks=1, debug=False):
+        #TODO: delete n_blocks layers from stack bottom
         pass
 
     def update(self, block_txs, debug=False):

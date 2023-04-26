@@ -16,7 +16,10 @@ class Client:
             self.to_col = "to"
         else:
             raise ValueError(txs.columns)
-        self.txs = self.txs.rename(columns={self.from_col:'from', self.to_col:'to'})[['from', 'to', 'gas']]
+        cols = ['from', 'to']
+        if "gas" in txs.columns: # an optional gas column
+            cols.append('gas')
+        self.txs = self.txs.rename(columns={self.from_col:'from', self.to_col:'to'})[cols]
         self.reset()
     
     def reset(self, ptx=0):
