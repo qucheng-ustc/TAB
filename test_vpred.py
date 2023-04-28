@@ -44,11 +44,12 @@ def simulate_double(txs, model, window, args):
     for epoch in tqdm(range(window-1, simulator.max_epochs-window+1)):
         X = hgraph.get_vweight_matrix(-(window-1)).toarray()
         y_pred = model.predict(X)
-        y_pred = np.ceil(y_pred).astype(int)
+        y_pred = np.maximum(np.ceil(y_pred).astype(int), 0) + 1 # convert to int>=1
         graph.set_vweight(hgraph.vertex_idx, y_pred).save(graph_path, v_weight=True)
         parts = partition.partition(args.n_shards)
-        account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
-        done = simulator.step(account_table)
+        base_account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
+        fallback_account_table = {a[1]:s for a,s in zip(graph.vertex_idx,parts)}
+        done = simulator.step((base_account_table, fallback_account_table))
         block_txs = simulator.get_block_txs(-simulator.n_blocks)
         graph.update(block_txs)
         hgraph.update(block_txs.assign(block=np.repeat(epoch, len(block_txs.index))))
@@ -62,7 +63,7 @@ def test_prediction(train_txs, test_txs, window=5, args=None):
     log.print('Account prediction:')
     train_txs = train_txs[['from','to']]
     test_txs = test_txs[['from','to']]
-    epoch_tx_count = args.tx_rate*args.block_interval*args.n_blocks
+    epoch_tx_count = min(args.tx_rate*args.block_interval*args.n_blocks, args.tx_per_block*args.n_shards*args.n_blocks)
 
     # training model
     train_epochs = len(train_txs)//epoch_tx_count
@@ -71,9 +72,11 @@ def test_prediction(train_txs, test_txs, window=5, args=None):
     train_hgraph = GraphStack(pd.DataFrame({'block':np.repeat(np.arange(train_epochs,dtype=int),epoch_tx_count),'from':train_txs['from'].values[:train_n_tx], 'to':train_txs['to'].values[:train_n_tx]}), debug=True)
     train_vweight_matrix = train_hgraph.get_vweight_matrix().toarray()
     log.print('Train model with data:', train_vweight_matrix.shape)
-    model = MLPModel()
-    train_score = model.fit(train_vweight_matrix, window=window)
+    baseline_model = AverageModel()
+    model = MLPModel(base_model=baseline_model, window=window, min_value=args.min_value, normalize=args.normalize)
+    train_score = model.fit(train_vweight_matrix)
     log.print('Train score:', train_score)
+    log.print('Train loss curves:', model.loss_curves)
 
     log.print('Simulate on train txs:', len(train_txs))
     simulate_double(train_txs, model=model, window=window, args=args)
@@ -82,7 +85,7 @@ def test_prediction(train_txs, test_txs, window=5, args=None):
     simulate_double(test_txs, model=model, window=window, args=args)
 
     log.print('Baseline model test:')
-    baseline_model = AverageModel()
+    
     log.print('Simulate on train txs:', len(train_txs))
     simulate_double(train_txs, model=baseline_model, window=window, args=args)
 
@@ -95,6 +98,8 @@ if __name__=='__main__':
     parser.add_argument('--window', type=int, default=5)
     parser.add_argument('--train_start_time', type=str, default='2021-07-26 00:00:00')
     parser.add_argument('--train_end_time', type=str, default='2021-07-31 23:59:59')
+    parser.add_argument('--min_value', type=float, default=0.)
+    parser.add_argument('--normalize', action='store_true', default=False)
     args = parser.parse_args()
     log.print(args)
 
