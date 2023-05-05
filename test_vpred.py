@@ -35,18 +35,27 @@ def simulate_double(txs, model, window, args):
     # first simulate window-1 epochs
     for epoch in range(window-1):
         simulator.step((base_account_table, fallback_account_table))
+    log.print('Initial condition:')
+    log.print(simulator.info())
     block_txs = simulator.get_block_txs()
     graph = Graph(block_txs, v_weight=False) # empty graph without v_weights
     hgraph = GraphStack(block_txs.assign(block=block_txs['block']//simulator.n_blocks))
-    partition = Partition(graph_path)
     mse_list = []
+    target_weights = np.full(n_shards, fill_value=1./n_shards, dtype=float)
     # simulate on rest txs
     for epoch in tqdm(range(window-1, simulator.max_epochs-window+1)):
         X = hgraph.get_vweight_matrix(-(window-1)).toarray()
         y_pred = model.predict(X)
         y_pred = np.maximum(np.ceil(y_pred).astype(int), 0) + 1 # convert to int>=1
         graph.set_vweight(hgraph.vertex_idx, y_pred).save(graph_path, v_weight=True)
-        parts = partition.partition(args.n_shards)
+        if args.adjust_part_weights:
+            n_txs = simulator.get_block_n_txs(-1)
+            target_weights = np.ones_like(target_weights)
+            for shard_id, shard_n_txs in enumerate(n_txs):
+                if shard_n_txs<simulator.tx_per_block:
+                    target_weights[shard_id] *= 2
+            target_weights = target_weights/np.sum(target_weights)
+        parts = Partition(graph_path).partition(args.n_shards, target_weights=target_weights)
         base_account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
         fallback_account_table = {a[1]:s for a,s in zip(graph.vertex_idx,parts)}
         done = simulator.step((base_account_table, fallback_account_table))
@@ -56,6 +65,7 @@ def simulate_double(txs, model, window, args):
         y_true = hgraph.get_weight_matrix(-1)[:len(y_pred),:].toarray()
         mse_list.append(mean_squared_error(y_true, y_pred))
         if done: break
+    log.print('Final condition:')
     log.print(simulator.info())
     log.print('MSE:', np.average(mse_list), max(mse_list), min(mse_list))
 
@@ -73,10 +83,11 @@ def test_prediction(train_txs, test_txs, window=5, args=None):
     train_vweight_matrix = train_hgraph.get_vweight_matrix().toarray()
     log.print('Train model with data:', train_vweight_matrix.shape)
     baseline_model = AverageModel()
-    model = MLPModel(base_model=baseline_model, window=window, min_value=args.min_value, normalize=args.normalize)
+    model = MLPModel(base_model=baseline_model, window=window, min_value=args.min_value, normalize=args.normalize, shuffle=True, val_on_time=True)
     train_score = model.fit(train_vweight_matrix)
     log.print('Train score:', train_score)
     log.print('Train loss curves:', model.loss_curves)
+    log.print('Train score curves:', model.score_curves)
 
     log.print('Simulate on train txs:', len(train_txs))
     simulate_double(train_txs, model=model, window=window, args=args)
@@ -100,6 +111,7 @@ if __name__=='__main__':
     parser.add_argument('--train_end_time', type=str, default='2021-07-31 23:59:59')
     parser.add_argument('--min_value', type=float, default=0.)
     parser.add_argument('--normalize', action='store_true', default=False)
+    parser.add_argument('--adjust_part_weights', action='store_true', default=False)
     args = parser.parse_args()
     log.print(args)
 

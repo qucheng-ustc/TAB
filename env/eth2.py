@@ -62,8 +62,8 @@ class Eth2v1Simulator:
 
     def block_height(self):
         return max([len(blocks) for blocks in self.sblock])
-
-    def get_block_txs(self, start=0, end=None):
+    
+    def _adjust_block_slice(self, start, end):
         block_height = self.block_height()
         if start<0:
             start = block_height + start
@@ -76,6 +76,18 @@ class Eth2v1Simulator:
         if end<0: end = 0
         assert(start<block_height)
         assert(end<=block_height)
+        return start, end
+    
+    def get_block_n_txs(self, start=0, end=None):
+        start, end = self._adjust_block_slice(start, end)
+        n_txs = [0]*self.n_shards
+        for shard,blocks in enumerate(self.sblock):
+            for block_id,block in enumerate(blocks[start:end]):
+                n_txs[shard] += len(block)
+        return n_txs
+
+    def get_block_txs(self, start=0, end=None):
+        start, end = self._adjust_block_slice(start, end)
         txs = []
         for shard,blocks in enumerate(self.sblock):
             for block_id,block in enumerate(blocks[start:end]):
