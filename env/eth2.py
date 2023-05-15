@@ -96,8 +96,16 @@ class Eth2v1Simulator:
                         txs.append((shard, block_id+start, from_addr, to_addr))
         return pd.DataFrame(txs, columns=['shard', 'block', 'from', 'to'])
     
-    def get_tx_pool(self):
-        return self.stx_pool
+    def get_pending_txs(self, forward=False):
+        txs = []
+        for shard, shard_tx_pool in enumerate(self.stx_pool):
+            for from_addr, to_addr, *_ in shard_tx_pool:
+                txs.append((shard, from_addr, to_addr))
+        if forward:
+            for shard, shard_tx_forward in enumerate(self.stx_forward):
+                for from_addr, to_addr, *_ in shard_tx_forward:
+                    txs.append((shard, from_addr, to_addr))
+        return pd.DataFrame(txs, columns=['shard', 'from', 'to'])
 
     def info(self):
         n_tx = self.client.n_tx()
@@ -301,3 +309,7 @@ class Eth2v3Simulator(Eth2v1Simulator):
         result['wasted_mean'] = np.average(result['tx_wasted'])
         result['wasted_std'] = np.std(result['tx_wasted'])
         return result
+
+class HarmonySimulator:
+    def __init__(self):
+        pass

@@ -14,7 +14,7 @@ from exp.log import get_logger
 
 log = get_logger('test_vpred', file_name='logs/test_vpred.log')
 
-def simulate_double(txs, model, window, args):
+def simulate(txs, model, window, args):
     n_shards = args.n_shards
     n_blocks = args.n_blocks
     tx_rate = args.tx_rate
@@ -22,19 +22,21 @@ def simulate_double(txs, model, window, args):
     block_interval = args.block_interval
     log.print("Double account table updated with partition, v_weights updated by model prediction, weights updated by all history txs:")
     graph_path = f'./metis/graphs/test_vpred_double_{window}.txt'
-    base_allocator = TableAccountAllocate(n_shards=n_shards, fallback=None)
-    fallback_allocator = TableAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
-    allocator = DoubleAccountAllocate(n_shards=n_shards, base=base_allocator, fallback=fallback_allocator)
     txs = txs[['from','to']]
-    client = DoubleAddrClient(txs=txs, tx_rate=tx_rate)
+    if args.double_addr:
+        base_allocator = TableAccountAllocate(n_shards=n_shards, fallback=None)
+        fallback_allocator = TableAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
+        allocator = DoubleAccountAllocate(n_shards=n_shards, base=base_allocator, fallback=fallback_allocator)
+        client = DoubleAddrClient(txs=txs, tx_rate=tx_rate)
+
+    else:
+        allocator = TableAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
+        client = Client(txs=txs, tx_rate=tx_rate)
     simulator = Eth2v3Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
-    
     simulator.reset()
-    base_account_table = {}
-    fallback_account_table = {}
     # first simulate window-1 epochs
     for epoch in range(window-1):
-        simulator.step((base_account_table, fallback_account_table))
+        simulator.step(None)
     log.print('Initial condition:')
     log.print(simulator.info())
     block_txs = simulator.get_block_txs()
@@ -48,17 +50,21 @@ def simulate_double(txs, model, window, args):
         y_pred = model.predict(X)
         y_pred = np.maximum(np.ceil(y_pred).astype(int), 0) + 1 # convert to int>=1
         graph.set_vweight(hgraph.vertex_idx, y_pred).save(graph_path, v_weight=True)
-        if args.adjust_part_weights:
+        if args.adjust_part_weights is not None:
             n_txs = simulator.get_block_n_txs(-1)
             target_weights = np.ones_like(target_weights)
             for shard_id, shard_n_txs in enumerate(n_txs):
                 if shard_n_txs<simulator.tx_per_block:
-                    target_weights[shard_id] *= 2
+                    target_weights[shard_id] *= args.adjust_part_weights
             target_weights = target_weights/np.sum(target_weights)
         parts = Partition(graph_path).partition(args.n_shards, target_weights=target_weights)
-        base_account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
-        fallback_account_table = {a[1]:s for a,s in zip(graph.vertex_idx,parts)}
-        done = simulator.step((base_account_table, fallback_account_table))
+        if args.double_addr:
+            base_account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
+            fallback_account_table = {a[1]:s for a,s in zip(graph.vertex_idx,parts)}
+            action = (base_account_table, fallback_account_table)
+        else:
+            action = {a:s for a,s in zip(graph.vertex_idx,parts)}
+        done = simulator.step(action)
         block_txs = simulator.get_block_txs(-simulator.n_blocks)
         graph.update(block_txs)
         hgraph.update(block_txs.assign(block=np.repeat(epoch, len(block_txs.index))))
@@ -83,25 +89,25 @@ def test_prediction(train_txs, test_txs, window=5, args=None):
     train_vweight_matrix = train_hgraph.get_vweight_matrix().toarray()
     log.print('Train model with data:', train_vweight_matrix.shape)
     baseline_model = AverageModel()
-    model = MLPModel(base_model=baseline_model, window=window, min_value=args.min_value, normalize=args.normalize, shuffle=True, val_on_time=True)
+    model = MLPModel(base_model=baseline_model, window=window, min_value=args.min_value, normalize=args.normalize, shuffle=True, val_on_time=True, early_stop=True, tol=1e-6, tol_iters=20)
     train_score = model.fit(train_vweight_matrix)
     log.print('Train score:', train_score)
     log.print('Train loss curves:', model.loss_curves)
     log.print('Train score curves:', model.score_curves)
 
     log.print('Simulate on train txs:', len(train_txs))
-    simulate_double(train_txs, model=model, window=window, args=args)
+    simulate(train_txs, model=model, window=window, args=args)
 
     log.print('Simulate on test txs:', len(test_txs))
-    simulate_double(test_txs, model=model, window=window, args=args)
+    simulate(test_txs, model=model, window=window, args=args)
 
     log.print('Baseline model test:')
     
     log.print('Simulate on train txs:', len(train_txs))
-    simulate_double(train_txs, model=baseline_model, window=window, args=args)
+    simulate(train_txs, model=baseline_model, window=window, args=args)
 
     log.print('Simulate on test txs:', len(test_txs))
-    simulate_double(test_txs, model=baseline_model, window=window, args=args)
+    simulate(test_txs, model=baseline_model, window=window, args=args)
 
 if __name__=='__main__':
     from exp.args import get_default_parser
@@ -111,7 +117,8 @@ if __name__=='__main__':
     parser.add_argument('--train_end_time', type=str, default='2021-07-31 23:59:59')
     parser.add_argument('--min_value', type=float, default=0.)
     parser.add_argument('--normalize', action='store_true', default=False)
-    parser.add_argument('--adjust_part_weights', action='store_true', default=False)
+    parser.add_argument('--adjust_part_weights', type=float, default=None)
+    parser.add_argument('--double_addr', action='store_true', default=False)
     args = parser.parse_args()
     log.print(args)
 

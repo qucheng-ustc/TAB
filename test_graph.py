@@ -6,7 +6,7 @@ from graph.graph import Graph, GroupGraph, PopularGroupGraph, CoarsenGraph
 from graph.partition import Partition
 from strategy.account import StaticAccountAllocate, PartitionAccountAllocate, TableAccountAllocate
 from strategy.allocate import GroupAllocateStrategy
-from env.eth2 import Eth2v1Simulator, Eth2v2Simulator
+from env.eth2 import Eth2v1Simulator, Eth2v2Simulator, Eth2v3Simulator
 from env.gym import Eth2v1, Eth2v2
 from env.client import Client, PryClient
 
@@ -16,6 +16,9 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
     tx_rate = args.tx_rate
     tx_per_block = args.tx_per_block
     block_interval = args.block_interval
+    vweight = True
+    if args.without_lb:
+        vweight = False
     print('Account graph & Table allocate:')
     graph_path = './metis/graphs/test_graph_table.txt'
     allocator = TableAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
@@ -24,7 +27,9 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
         client = PryClient(txs=txs, tx_rate=tx_rate, n_shards=n_shards, account_table=allocator.account_table)
     else:
         client = Client(txs=txs, tx_rate=tx_rate)
-    if simulator == 'eth2v2':
+    if simulator == 'eth2v3':
+        simulator = Eth2v3Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
+    elif simulator == 'eth2v2':
         simulator = Eth2v2Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
     else:
         simulator = Eth2v1Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
@@ -33,12 +38,12 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
         print('Empty table:')
         simulator.reset()
         for _ in tqdm(range(simulator.max_epochs)):
-            simulator.step({})
+            simulator.step(None)
         print(simulator.info())
 
     if 'all' in method:
         print('Table updated by all txs partition:')
-        graph = Graph(txs=txs, debug=True).save(graph_path)
+        graph = Graph(txs=txs, vweight=vweight, debug=True).save(graph_path)
         parts = Partition(graph_path).partition(n_shards, debug=True)
         print('Parts:', len(parts))
         account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
@@ -51,7 +56,7 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
         print("Table updated by current partition:")
         simulator.reset()
         for _ in tqdm(range(simulator.max_epochs)):
-            graph = Graph(client.next(simulator.epoch_time, peek=True)).save(graph_path)
+            graph = Graph(client.next(simulator.epoch_time, peek=True), vweight=vweight).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
             account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
             done = simulator.step(account_table)
@@ -65,7 +70,7 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
         for _ in tqdm(range(simulator.max_epochs)):
             done = simulator.step(account_table)
             if done: break
-            graph = Graph(simulator.get_block_txs(-simulator.n_blocks)).save(graph_path)
+            graph = Graph(simulator.get_block_txs(-simulator.n_blocks), v_weight=vweight).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
             account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
         print(simulator.info())
@@ -78,16 +83,29 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
             for _ in tqdm(range(simulator.max_epochs)):
                 done = simulator.step(account_table)
                 if done: break
-                graph = Graph(simulator.get_block_txs(-simulator.n_blocks*past_step)).save(graph_path)
+                graph = Graph(simulator.get_block_txs(-simulator.n_blocks*past_step), v_weight=vweight).save(graph_path)
                 parts = Partition(graph_path).partition(n_shards)
                 account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
             print(simulator.info())
+
+    if 'pending' in method:
+        print('Table updated by pending txs partition:')
+        simulator.reset()
+        for _ in tqdm(range(simulator.max_epochs)):
+            graph = Graph(simulator.get_pending_txs(forward=False), v_weight=vweight).save(graph_path)
+            account_table = {}
+            if graph.n_edge>0:
+                parts = Partition(graph_path).partition(n_shards)
+                account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
+            done = simulator.step(account_table)
+            if done: break
+        print(simulator.info())
     
     if 'history' in method:
         print("Table updated with all history txs partition:")
         simulator.reset()
         account_table = {}
-        graph = Graph() # empty graph
+        graph = Graph(v_weight=vweight) # empty graph
         for epoch in tqdm(range(simulator.max_epochs)):
             done = simulator.step(account_table)
             if done: break
@@ -102,6 +120,7 @@ def test_graph(txs, client='normal', simulator='eth2v1', method=['all', 'last', 
     tx_rate = args.tx_rate
     tx_per_block = args.tx_per_block
     block_interval = args.block_interval
+    vweight = False if args.without_lb else True
     print('Account Graph:')
     txs = txs[['from','to','gas']]
     graph_path = './metis/graphs/test_graph.txt'
@@ -111,7 +130,9 @@ def test_graph(txs, client='normal', simulator='eth2v1', method=['all', 'last', 
         client = PryClient(txs=txs, tx_rate=tx_rate, n_shards=n_shards, account_table={})
     else:
         client = Client(txs=txs, tx_rate=tx_rate)
-    if simulator=='eth2v2':
+    if simulator=='eth2v3':
+        simulator = Eth2v3Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
+    elif simulator=='eth2v2':
         simulator = Eth2v2Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
     else:
         simulator = Eth2v1Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
@@ -167,6 +188,18 @@ def test_graph(txs, client='normal', simulator='eth2v1', method=['all', 'last', 
                 done = simulator.step((account_list, parts))
                 if done: break
             print(simulator.info())
+
+    if 'pending' in method:
+        print('Table updated by pending txs partition:')
+        simulator.reset()
+        for _ in tqdm(range(simulator.max_epochs)):
+            graph = Graph(simulator.get_pending_txs(forward=False), v_weight=vweight).save(graph_path)
+            parts = []
+            if graph.n_edge>0:
+                parts = Partition(graph_path).partition(n_shards)
+            done = simulator.step((graph.vertex_idx,parts))
+            if done: break
+        print(simulator.info())
 
     if 'history' in method:
         print("Partition with all history txs:")
@@ -295,7 +328,7 @@ if __name__=='__main__':
     import argparse
     parser = argparse.ArgumentParser(description='test graph')
     parser.add_argument('funcs', nargs='*', default=['graph'], choices=['graph', 'group', 'popular', 'coarsen', 'table'])
-    parser.add_argument('--method', type=str, nargs='*', choices=['none', 'all', 'last', 'past', 'current', 'history'], default=['all'])
+    parser.add_argument('--method', type=str, nargs='*', choices=['none', 'all', 'last', 'past', 'current', 'history', 'pending'], default=['all'])
     parser.add_argument('--past', type=int, nargs='*', default=[20]) # list of number of past steps
     parser.add_argument('-k', '--k', type=int, default=3)
     parser.add_argument('--n_shards', type=int, default=0)
@@ -307,7 +340,8 @@ if __name__=='__main__':
     parser.add_argument('--start_time', type=str, default='2021-08-01 00:00:00')
     parser.add_argument('--end_time', type=str, default=None)
     parser.add_argument('--client', type=str, default='normal', choices=['normal', 'pry'])
-    parser.add_argument('--simulator', type=str, default='eth2v1', choices=['eth2v1', 'eth2v2'])
+    parser.add_argument('--simulator', type=str, default='eth2v1', choices=['eth2v1', 'eth2v2', 'eth2v3'])
+    parser.add_argument('--without_lb', action='store_true', default=False)
     args = parser.parse_args()
     print(args)
 

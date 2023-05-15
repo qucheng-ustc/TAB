@@ -34,8 +34,11 @@ class PartitionAccountAllocate(AccountAllocate):
         self.fallback = fallback
 
     def apply(self, action):
-        #action is a tuple (account list, partition result)
-        self.account_table = {a:s for a,s in zip(*action)}
+        #action is a tuple (account list, partition result) | None
+        if action is None:
+            self.account_table = {}
+        else:
+            self.account_table = {a:s for a,s in zip(*action)}
 
     def reset(self):
         self.account_table = None
@@ -51,12 +54,13 @@ class PartitionAccountAllocate(AccountAllocate):
 
 #allocate account based on account->shard mapping table
 class TableAccountAllocate(AccountAllocate):
-    def __init__(self, n_shards, fallback=None):
+    def __init__(self, n_shards, fallback=None, account_table={}):
         super().__init__(n_shards=n_shards)
-        self.account_table = {}
+        self.account_table = account_table
         self.fallback = fallback
     
     def apply(self, action):
+        if action is None: return
         self.account_table.update(action)
 
     def reset(self):
@@ -90,6 +94,7 @@ class DoubleAccountAllocate(AccountAllocate):
     
     # apply action on base strategy
     def apply(self, action):
+        if action is None: return
         # action is a tuple for base, fallback strategies
         self.base.apply(action=action[0])
         self.fallback.apply(action=action[1])

@@ -11,7 +11,7 @@ def process_data(data, window, min_value, normalize, extra_features):
     fit_data = fit_data[X_cond,:]
     fit_X = fit_data[:,:-1]
     X_mean = X_mean[X_cond,:]
-    X_std = np.std(fit_X, axis=1, keepdims=True)
+    X_std = np.maximum(1e-4, np.std(fit_X, axis=1, keepdims=True))
     fit_y = fit_data[:,-1:]
     if normalize:
         fit_X = (fit_X - X_mean)/X_std
@@ -107,7 +107,7 @@ class MLPModel:
         hot_X = X[X_cond,:]
         rest_X = X[~X_cond,:]
         hot_X_mean = X_mean[X_cond,:]
-        hot_X_std = np.maximum(1e-4,np.std(hot_X, axis=0, keepdims=True))
+        hot_X_std = np.maximum(1e-4,np.std(hot_X, axis=1, keepdims=True))
         if normalize:
             hot_X = (hot_X - hot_X_mean)/hot_X_std
         if extra_features:
