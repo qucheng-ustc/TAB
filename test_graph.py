@@ -73,7 +73,7 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
             graph = Graph(simulator.get_block_txs(-simulator.n_blocks), v_weight=vweight).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
             account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
-        print(simulator.info())
+        print(simulator.info(simulator.n_blocks))
     
     if 'past' in method:
         for past_step in past:
@@ -172,10 +172,10 @@ def test_graph(txs, client='normal', simulator='eth2v1', method=['all', 'last', 
         for _ in tqdm(range(simulator.max_epochs)):
             done = simulator.step((account_list, parts))
             if done: break
-            graph = Graph(simulator.epoch_txs).save(graph_path)
+            graph = Graph(simulator.get_block_txs(-simulator.n_blocks)).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
             account_list = graph.vertex_idx
-        print(simulator.info())
+        print(simulator.info(simulator.n_blocks))
 
     if 'past' in method:
         for past_step in past:

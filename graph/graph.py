@@ -114,6 +114,10 @@ class Graph:
                 f.write('\n')
         return self
 
+class HotGraph(Graph):
+    def __init__(self):
+        pass
+
 class GroupGraph(Graph):
     def __init__(self, txs, g=7, addr_len=16, debug=False):
         self.txs = txs

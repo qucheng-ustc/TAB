@@ -95,6 +95,7 @@ if __name__=='__main__':
     parser = get_default_parser(description='test double')
     parser.add_argument('--method', type=str, nargs='*', choices=['none', 'all', 'last', 'past', 'current', 'history'], default=['all'])
     parser.add_argument('--past', type=int, nargs='*', default=[20]) # list of number of past steps
+    parser.add_argument('--min_size', type=int, default=0)
     args = parser.parse_args()
     if args.n_shards==0: args.n_shards = 1 << args.k
     print(args)

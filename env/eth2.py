@@ -245,7 +245,8 @@ class Eth2v3Simulator(Eth2v1Simulator):
             self.simulate_time += self.block_interval
         return self.client.done(time_interval=self.epoch_time)
 
-    def info(self):
+    def info(self, start=0, end=None):
+        start, end = self._adjust_block_slice(start, end)
         n_tx = self.client.n_tx()
         n_block = 0
         n_block_tx = 0
@@ -255,9 +256,10 @@ class Eth2v3Simulator(Eth2v1Simulator):
         tx_wasted = [0 for _ in range(self.n_shards)]
         tx_delay = []
         for shard, blocks in enumerate(self.sblock):
-            n_block += len(blocks)
+            shard_blocks = blocks[start:end]
+            n_block += len(shard_blocks)
             block_time = 0.
-            for block in blocks:
+            for block in shard_blocks:
                 block_time += self.block_interval
                 n_block_tx += len(block)
                 for _, _, timestamp, from_shard, to_shard in block:
@@ -309,7 +311,3 @@ class Eth2v3Simulator(Eth2v1Simulator):
         result['wasted_mean'] = np.average(result['tx_wasted'])
         result['wasted_std'] = np.std(result['tx_wasted'])
         return result
-
-class HarmonySimulator:
-    def __init__(self):
-        pass
