@@ -5,48 +5,128 @@ import multiprocessing as mp
 
 class Protocol:
     MSG_TYPE_CTRL_RESET = 0x00
-    MSG_TYPE_SIM_BLOCK = 0x01
-    MSG_TYPE_SIM_REALLOCATE = 0x02
 
+    MSG_TYPE_CTRL_BLOCK = 0x01
+    MSG_TYPE_CTRL_ALLOCATION = 0x02
+    MSG_TYPE_CTRL_TRANSITION = 0x03
+    MSG_TYPE_CTRL_REPLY = 0x10
+
+    MSG_TYPE_CTRL_INFO = 0x04
+    MSG_TYPE_CTRL_REPORT = 0x11
+
+    MSG_TYPE_CTRL_SYNC = 0x05
+    MSG_TYPE_CTRL_ACK = 0x12
+
+    MSG_TYPE_CLIENT_TX = 0x20
+
+    MSG_TYPE_SHARD_FORWARD_TX = 0x30
+    MSG_TYPE_SHARD_TX = 0x31
 
 class NetworkSimulator:
     # simple full connected network
-    def __init__(self, nodes:list, delay:float=0):
+    def __init__(self, nodes:list, delay:float=0.):
         self.n_nodes = len(nodes)
         self.nodes = nodes
-        self.queues = {id:mp.Queue() for id in nodes}
-        self.info_queue = mp.Queue() # for reporting information to main simulator
+        self.queues = {id:mp.Queue() for id in nodes} # for msg exchange between nodes
+        self.report_queue = mp.Queue() # for reporting shard info to main simulator
+        self.closed = False
 
     def send(self, id, to_id, msg_type, content):
         self.queues[to_id].put((id, msg_type, content))
+    
+    def broadcast(self, id, msg_type, content):
+        for queue in self.queues.values():
+            queue.put((id, msg_type, content))
 
     def recv(self, id):
         return self.queues[id].get()
     
+    def ctrl(self, msg_type):
+        self.broadcast(-1, msg_type=msg_type, content=None)
+
     def report(self, id, msg_type, content):
-        self.info_queue.put((id, msg_type, content))
+        self.report_queue.put((id, msg_type, content))
+    
+    def join(self, msg_type):
+        reply = dict()
+        while len(reply)<len(self.queues):
+            id, report_type, content = self.report_queue.get()
+            if report_type == msg_type:
+                reply[id] = content
+        return reply
     
     def close(self):
-        for queue in self.queues:
+        for queue in self.queues.values():
             queue.close()
-        self.info_queue.close()
+        self.report_queue.close()
+        self.closed = True
 
-def shard_worker(id: int, net: NetworkSimulator, allocate):
+def shard_worker(id: int, net: NetworkSimulator, allocate, tx_per_block):
     tx_pool = deque()
     tx_forward = deque()
     blocks = []
-    done = False
-    while not done:
-        from_id, msg_type, msg = net.recv(id)
+    while True:
+        from_id, msg_type, content = net.recv(id)
         match msg_type:
-            case Protocol.MSG_TYPE_SIM_BLOCK:
-                pass
+            case Protocol.MSG_TYPE_CTRL_RESET:
+                return
+            case Protocol.MSG_TYPE_CTRL_INFO:
+                net.report(id, Protocol.MSG_TYPE_CTRL_REPORT, (blocks, tx_pool, tx_forward))
+            case Protocol.MSG_TYPE_CTRL_BLOCK:
+                # each shard produce one block
+                block_height = len(blocks)
+                block_txs = []
+                while len(block_txs)<tx_per_block and len(tx_forward)>0:
+                    if tx_forward[0][5]>=block_height:
+                        break
+                    # only append committed forward tx
+                    block_txs.append(tx_forward.popleft())
+                while len(block_txs)<tx_per_block and len(tx_pool)>0:
+                    from_addr, to_addr, timestamp, from_shard, to_shard = tx_pool.popleft()
+                    tx = (from_addr, to_addr, timestamp, from_shard, to_shard, block_height)
+                    block_txs.append(tx)
+                    # cross shard tx forward to target shard
+                    if to_shard!=id:
+                        net.send(id, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
+                blocks.append(block_txs)
+                net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
+            case Protocol.MSG_TYPE_SHARD_FORWARD_TX:
+                tx = content
+                tx_forward.append(tx)
+            case Protocol.MSG_TYPE_CTRL_ALLOCATION:
+                net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
+            case Protocol.MSG_TYPE_CTRL_TRANSITION:
+                # re-allocate tx pool
+                new_tx_pool = deque()
+                new_tx_forward = deque()
+                for from_addr, to_addr, timestamp, *_ in tx_pool:
+                    from_shard = allocate.allocate(from_addr)
+                    to_shard = allocate.allocate(to_addr)
+                    tx = (from_addr, to_addr, timestamp, from_shard, to_shard)
+                    if from_shard != id:
+                        net.send(id, from_shard, Protocol.MSG_TYPE_SHARD_TX, tx)
+                    else:
+                        new_tx_pool.append(tx)
+                tx_pool = new_tx_pool
+                for from_addr, to_addr, timestamp, _, _, block_height in tx_forward:
+                    from_shard = allocate.allocate(from_addr)
+                    to_shard = allocate.allocate(to_addr)
+                    tx = (from_addr, to_addr, timestamp, from_shard, to_shard, block_height)
+                    if to_shard != id:
+                        net.send(id, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
+                    else:
+                        new_tx_forward.append(tx)
+                tx_forward = new_tx_forward
+                net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
+            case Protocol.MSG_TYPE_SHARD_TX | Protocol.MSG_TYPE_CLIENT_TX:
+                tx = content
+                tx_pool.append(tx)
 
 class ShardSimulator:
-    def __init__(self, id: int, net: NetworkSimulator, allocate):
+    def __init__(self, id: int, net: NetworkSimulator, allocate, tx_per_block):
         self.id = id
         self.net = net
-        self.proc = mp.Process(target=shard_worker, kwargs=dict(id=id, net=net, allocate=allocate))
+        self.proc = mp.Process(target=shard_worker, kwargs=dict(id=id, net=net, allocate=allocate, tx_per_block=tx_per_block))
 
     def start(self):
         self.proc.start()
@@ -56,9 +136,6 @@ class ShardSimulator:
 
     def close(self):
         self.proc.close()
-    
-    def reset(self):
-        self.net.send(id=self.id, to_id=self.id, msg_type=Protocol.MSG_TYPE_CTRL_RESET)
 
 class HarmonySimulator:
     def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10):
@@ -78,27 +155,32 @@ class HarmonySimulator:
 
         self.max_epochs = len(self.txs)//self.epoch_tx_count
 
-        self.network_simulator = None
-        self.shard_simulators = []
+        self.network = None
+        self.shards = []
+
+    def close(self):
+        self.network.ctrl(Protocol.MSG_TYPE_CTRL_RESET)
+        for s in self.shards: s.join()
+        for s in self.shards: s.close()
+        self.network.close()
 
     def reset(self, ptx=0):
         self.allocate.reset()
         self.client.reset(ptx=ptx)
         self.simulate_time = 0
+        self.simulate_blocks = 0
 
         self.stx_pool = [deque() for _ in range(self.n_shards)]
         self.stx_forward = [deque() for _ in range(self.n_shards)]
         self.sblock = [[] for _ in range(self.n_shards)]
 
-        if self.network_simulator is not None:
-            self.network_simulator.close()
+        if self.network is not None and not self.network.closed:
+            self.close()
         self.shard_ids = list(range(self.n_shards))
-        self.network_simulator = NetworkSimulator(self.shard_ids)
-        for s in self.shard_simulators: s.reset()
-        for s in self.shard_simulators: s.join()
-        for s in self.shard_simulators: s.close()
-        self.shard_simulators = [ShardSimulator(id, self.network_simulator) for id in self.shard_ids]
-        for s in self.shard_simulators: s.start()
+        self.network = NetworkSimulator(self.shard_ids)
+
+        self.shards = [ShardSimulator(id, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block) for id in self.shard_ids]
+        for s in self.shards: s.start()
         return self.client.done(time_interval=self.epoch_time)
 
     def block_height(self):
@@ -132,7 +214,7 @@ class HarmonySimulator:
         txs = []
         for shard,blocks in enumerate(self.sblock):
             for block_id,block in enumerate(blocks[start:end]):
-                for from_addr, to_addr, _, from_shard, _ in block:
+                for from_addr, to_addr, _, from_shard, *_ in block:
                     if from_shard == shard: # only return inner txs and out txs
                         txs.append((shard, block_id+start, from_addr, to_addr))
         return pd.DataFrame(txs, columns=['shard', 'block', 'from', 'to'])
@@ -149,23 +231,17 @@ class HarmonySimulator:
         return pd.DataFrame(txs, columns=['shard', 'from', 'to'])
 
     def step(self, action):
-        # shard #0 collects block txs from other shard
-        self.allocate.apply(action) # apply allocate action before txs arrives
+        # 1. Allocation: Shard #0 collects account graph from other shard, construct whole graph and partition it, create an allocation block and broadcasts allocation block to all shards
+        # 2. Transition: All shards apply the account allocation action and start state transition and forward pending txs in tx pool to destination shards, all shards produce state block after receive complete account states
+        # 3. Block: All shards process transactions and produce blocks
 
-        # re-allocate tx pool
-        stx_pool = [deque() for i in range(self.n_shards)]
-        stx_forward = [deque() for i in range(self.n_shards)]
-        for shard, (tx_pool, tx_forward) in enumerate(zip(self.stx_pool, self.stx_forward)):
-            for from_addr, to_addr, gas, _, _ in tx_pool:
-                from_shard = self.allocate.allocate(from_addr)
-                to_shard = self.allocate.allocate(to_addr)
-                stx_pool[from_shard].append((from_addr, to_addr, gas, from_shard, to_shard))
-            for from_addr, to_addr, gas, _, _ in tx_forward:
-                from_shard = self.allocate.allocate(from_addr)
-                to_shard = self.allocate.allocate(to_addr)
-                stx_forward[to_shard].append((from_addr, to_addr, gas, from_shard, to_shard))
-        self.stx_pool = stx_pool
-        self.stx_forward = stx_forward
+        # Allocation & Transition, client is shutdown during this period
+        self.network.ctrl(Protocol.MSG_TYPE_CTRL_ALLOCATION)
+        self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
+        self.simulate_time += self.block_interval # simply add intervals
+        self.network.ctrl(Protocol.MSG_TYPE_CTRL_TRANSITION)
+        self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
+        self.simulate_time += self.block_interval # simply add intervals
 
         # start simulation
         for _ in range(self.n_blocks):
@@ -175,24 +251,25 @@ class HarmonySimulator:
                 from_shard = self.allocate.allocate(from_addr)
                 to_shard = self.allocate.allocate(to_addr)
                 #tx store in tuple: (from_addr, to_addr, timestamp, from_shard, to_shard)
-                stx_pool[from_shard].append((from_addr, to_addr, timestamp, from_shard, to_shard))
+                tx = (from_addr, to_addr, timestamp, from_shard, to_shard)
+                self.network.send(-1, to_shard, Protocol.MSG_TYPE_CLIENT_TX, tx)
                 timestamp += 1./self.tx_rate
-            # each shard produce one block
-            for shard, (tx_pool, tx_forward) in enumerate(zip(stx_pool, stx_forward)):
-                n_forward = min(len(tx_forward), self.tx_per_block)
-                n_pool = min(len(tx_pool), self.tx_per_block-n_forward)
-                block_txs = [tx_forward.popleft() for _ in range(n_forward)]+[tx_pool.popleft() for _ in range(n_pool)]
-                self.sblock[shard].append(block_txs)
-            # cross shard tx forward to target shard in next timeslot
-            for shard, blocks in enumerate(self.sblock):
-                for tx in blocks[-1]:
-                    to_shard = tx[4]
-                    if to_shard!=shard:
-                        stx_forward[to_shard].append(tx)
+            self.network.ctrl(Protocol.MSG_TYPE_CTRL_BLOCK)
+            self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
             self.simulate_time += self.block_interval
+            self.simulate_blocks += 1
         return self.client.done(time_interval=self.epoch_time)
 
-    def info(self):
+    def info(self, start=0, end=None):
+        # re-sync shard blocks & tx pools
+        self.network.ctrl(Protocol.MSG_TYPE_CTRL_INFO)
+        results = self.network.join(Protocol.MSG_TYPE_CTRL_REPORT)
+        for shard, result in results.items():
+            blocks, tx_pool, tx_forward = result
+            self.sblock[shard] = blocks
+            self.stx_pool[shard] = tx_pool
+            self.stx_forward[shard] = tx_forward
+        start, end = self._adjust_block_slice(start, end)
         n_tx = self.client.n_tx()
         n_block = 0
         n_block_tx = 0
@@ -201,13 +278,17 @@ class HarmonySimulator:
         n_block_inner_tx = 0
         tx_wasted = [0 for _ in range(self.n_shards)]
         tx_delay = []
+        start_time = start*self.block_interval
+        end_time = end*self.block_interval
+        total_time = end_time - start_time
         for shard, blocks in enumerate(self.sblock):
-            n_block += len(blocks)
-            block_time = 0.
-            for block in blocks:
+            shard_blocks = blocks[start:end]
+            n_block += len(shard_blocks)
+            block_time = start_time
+            for block in shard_blocks:
                 block_time += self.block_interval
                 n_block_tx += len(block)
-                for _, _, timestamp, from_shard, to_shard in block:
+                for _, _, timestamp, from_shard, to_shard, *_ in block:
                     if to_shard!=shard:
                         n_block_out_tx += 1
                     elif from_shard==shard:
@@ -226,16 +307,17 @@ class HarmonySimulator:
             tx_per_block = self.tx_per_block,
             block_interval = self.block_interval,
             simulate_time = self.simulate_time,
-            n_block = n_block,
-            target_n_block = self.n_shards*self.simulate_time/self.block_interval,
             n_tx = n_tx,
+            total_time = total_time,
+            n_block = n_block,
+            target_n_block = self.n_shards*total_time/self.block_interval,
             n_block_tx = n_block_tx,
             n_block_out_tx = n_block_out_tx,
             n_block_forward_tx = n_block_forward_tx,
             n_block_inner_tx = n_block_inner_tx,
             prop_cross_tx = n_block_out_tx / (n_block_out_tx+n_block_inner_tx) if n_block_tx>0 else 0,
-            throughput = n_block_tx/self.simulate_time if self.simulate_time>0 else 0,
-            actual_throughput = (n_block_inner_tx+n_block_forward_tx)/self.simulate_time if self.simulate_time>0 else 0,
+            throughput = n_block_tx/total_time if total_time>0 else 0,
+            actual_throughput = (n_block_inner_tx+n_block_forward_tx)/total_time if total_time>0 else 0,
             target_throughput = self.tx_per_block*self.n_shards/self.block_interval,
             tx_pool_length = [len(pool) for pool in self.stx_pool],
             tx_forward_length = [len(forward) for forward in self.stx_forward],

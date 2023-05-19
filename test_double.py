@@ -26,7 +26,7 @@ def test_double(txs, method=['last', 'past'], past=[10], args=None):
         print('Empty table:')
         simulator.reset()
         for _ in tqdm(range(simulator.max_epochs)):
-            simulator.step(({},{}))
+            simulator.step(None)
         print(simulator.info())
 
     if 'all' in method:
@@ -54,14 +54,16 @@ def test_double(txs, method=['last', 'past'], past=[10], args=None):
     if 'last' in method:
         print('Table updated by last step partition:')
         simulator.reset()
-        account_table = {}
+        base_account_table = {}
+        fallback_account_table = {}
         for _ in tqdm(range(simulator.max_epochs)):
-            done = simulator.step(account_table)
+            done = simulator.step((base_account_table, fallback_account_table))
             if done: break
-            graph = Graph(simulator.epoch_txs).save(graph_path)
+            graph = Graph(simulator.get_block_txs(-simulator.n_blocks)).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
-            account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
-        print(simulator.info())
+            base_account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
+            fallback_account_table = {a[1]:s for a,s in zip(graph.vertex_idx,parts)}
+        print(simulator.info(simulator.n_blocks))
     
     if 'past' in method:
         for past_step in past:

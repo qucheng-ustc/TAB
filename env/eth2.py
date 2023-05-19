@@ -209,14 +209,14 @@ class Eth2v3Simulator(Eth2v1Simulator):
         stx_pool = [deque() for i in range(self.n_shards)]
         stx_forward = [deque() for i in range(self.n_shards)]
         for shard, (tx_pool, tx_forward) in enumerate(zip(self.stx_pool, self.stx_forward)):
-            for from_addr, to_addr, gas, _, _ in tx_pool:
+            for from_addr, to_addr, timestamp, _, _ in tx_pool:
                 from_shard = self.allocate.allocate(from_addr)
                 to_shard = self.allocate.allocate(to_addr)
-                stx_pool[from_shard].append((from_addr, to_addr, gas, from_shard, to_shard))
-            for from_addr, to_addr, gas, _, _ in tx_forward:
+                stx_pool[from_shard].append((from_addr, to_addr, timestamp, from_shard, to_shard))
+            for from_addr, to_addr, timestamp, _, _ in tx_forward:
                 from_shard = self.allocate.allocate(from_addr)
                 to_shard = self.allocate.allocate(to_addr)
-                stx_forward[to_shard].append((from_addr, to_addr, gas, from_shard, to_shard))
+                stx_forward[to_shard].append((from_addr, to_addr, timestamp, from_shard, to_shard))
         self.stx_pool = stx_pool
         self.stx_forward = stx_forward
 
@@ -255,10 +255,13 @@ class Eth2v3Simulator(Eth2v1Simulator):
         n_block_inner_tx = 0
         tx_wasted = [0 for _ in range(self.n_shards)]
         tx_delay = []
+        start_time = start*self.block_interval
+        end_time = end*self.block_interval
+        total_time = end_time - start_time
         for shard, blocks in enumerate(self.sblock):
             shard_blocks = blocks[start:end]
             n_block += len(shard_blocks)
-            block_time = 0.
+            block_time = start_time
             for block in shard_blocks:
                 block_time += self.block_interval
                 n_block_tx += len(block)
@@ -281,16 +284,17 @@ class Eth2v3Simulator(Eth2v1Simulator):
             tx_per_block = self.tx_per_block,
             block_interval = self.block_interval,
             simulate_time = self.simulate_time,
-            n_block = n_block,
-            target_n_block = self.n_shards*self.simulate_time/self.block_interval,
             n_tx = n_tx,
+            total_time = total_time,
+            n_block = n_block,
+            target_n_block = self.n_shards*total_time/self.block_interval,
             n_block_tx = n_block_tx,
             n_block_out_tx = n_block_out_tx,
             n_block_forward_tx = n_block_forward_tx,
             n_block_inner_tx = n_block_inner_tx,
             prop_cross_tx = n_block_out_tx / (n_block_out_tx+n_block_inner_tx) if n_block_tx>0 else 0,
-            throughput = n_block_tx/self.simulate_time if self.simulate_time>0 else 0,
-            actual_throughput = (n_block_inner_tx+n_block_forward_tx)/self.simulate_time if self.simulate_time>0 else 0,
+            throughput = n_block_tx/total_time if total_time>0 else 0,
+            actual_throughput = (n_block_inner_tx+n_block_forward_tx)/total_time if total_time>0 else 0,
             target_throughput = self.tx_per_block*self.n_shards/self.block_interval,
             tx_pool_length = [len(pool) for pool in self.stx_pool],
             tx_forward_length = [len(forward) for forward in self.stx_forward],
