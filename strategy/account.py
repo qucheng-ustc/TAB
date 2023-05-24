@@ -56,15 +56,20 @@ class PartitionAccountAllocate(AccountAllocate):
 class TableAccountAllocate(AccountAllocate):
     def __init__(self, n_shards, fallback=None, account_table={}):
         super().__init__(n_shards=n_shards)
-        self.account_table = account_table
+        self.set_account_table(account_table)
         self.fallback = fallback
+    
+    def set_account_table(self, account_table):
+        import copy
+        self.init_account_table = copy.copy(account_table)
+        self.account_table = account_table
     
     def apply(self, action):
         if action is None: return
         self.account_table.update(action)
 
     def reset(self):
-        self.account_table.clear()
+        self.account_table = self.init_account_table
     
     def allocate(self, addr):
         if addr in self.account_table:
@@ -104,3 +109,18 @@ class DoubleAccountAllocate(AccountAllocate):
         if ret!=-1:
             return ret
         return self.fallback.allocate(addr[0])
+
+class TableDoubleAccountAllocate(DoubleAccountAllocate):
+    def __init__(self, n_shards, fallback, account_table={}):
+        super().__init__(n_shards=n_shards, base=TableAccountAllocate(n_shards=n_shards, fallback=None, account_table=account_table),
+                         fallback=TableAccountAllocate(n_shards=n_shards, fallback=fallback, account_table={a[1]:s for a,s in account_table.items()}))
+    
+    def set_account_table(self, account_table={}):
+        self.base.set_account_table(account_table)
+        self.fallback.set_account_table({a[1]:s for a,s in account_table.items()})
+    
+    def apply(self, action):
+        if action is None: return
+        base_account_table = action
+        fallback_account_table = {a[1]:s for a,s in action.items()}
+        super().apply((base_account_table, fallback_account_table))

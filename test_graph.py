@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from arrl.dataloader import get_default_dataloader
@@ -16,9 +17,8 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
     tx_rate = args.tx_rate
     tx_per_block = args.tx_per_block
     block_interval = args.block_interval
-    vweight = True
-    if args.without_lb:
-        vweight = False
+    vweight = args.vweight
+    allow_imbalance = args.allow_imbalance
     print('Account graph & Table allocate:')
     graph_path = './metis/graphs/test_graph_table.txt'
     allocator = TableAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
@@ -43,7 +43,7 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
 
     if 'all' in method:
         print('Table updated by all txs partition:')
-        graph = Graph(txs=txs, vweight=vweight, debug=True).save(graph_path)
+        graph = Graph(txs=txs, v_weight=vweight, debug=True).save(graph_path)
         parts = Partition(graph_path).partition(n_shards, debug=True)
         print('Parts:', len(parts))
         account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
@@ -92,14 +92,15 @@ def test_graph_table(txs, client='normal', simulator='eth2v1', method=['last', '
         print('Table updated by pending txs partition:')
         simulator.reset()
         for _ in tqdm(range(simulator.max_epochs)):
-            graph = Graph(simulator.get_pending_txs(forward=False), v_weight=vweight).save(graph_path)
+            graph = Graph(simulator.get_pending_txs(forward=False), v_weight=vweight)
+            graph = graph.save(graph_path, v_weight=vweight)
             account_table = {}
             if graph.n_edge>0:
-                parts = Partition(graph_path).partition(n_shards)
+                parts = Partition(graph_path).partition(n_shards, allow_imbalance=allow_imbalance)
                 account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
             done = simulator.step(account_table)
             if done: break
-        print(simulator.info())
+        print(simulator.info(simulator.n_blocks))
     
     if 'history' in method:
         print("Table updated with all history txs partition:")
@@ -120,7 +121,8 @@ def test_graph(txs, client='normal', simulator='eth2v1', method=['all', 'last', 
     tx_rate = args.tx_rate
     tx_per_block = args.tx_per_block
     block_interval = args.block_interval
-    vweight = False if args.without_lb else True
+    vweight = args.vweight
+    allow_imbalance = args.allow_imbalance
     print('Account Graph:')
     txs = txs[['from','to','gas']]
     graph_path = './metis/graphs/test_graph.txt'
@@ -340,8 +342,9 @@ if __name__=='__main__':
     parser.add_argument('--start_time', type=str, default='2021-08-01 00:00:00')
     parser.add_argument('--end_time', type=str, default=None)
     parser.add_argument('--client', type=str, default='normal', choices=['normal', 'pry'])
-    parser.add_argument('--simulator', type=str, default='eth2v1', choices=['eth2v1', 'eth2v2', 'eth2v3'])
-    parser.add_argument('--without_lb', action='store_true', default=False)
+    parser.add_argument('--simulator', type=str, default='eth2v3', choices=['eth2v1', 'eth2v2', 'eth2v3'])
+    parser.add_argument('--vweight', type=bool, default=True)
+    parser.add_argument('--allow_imbalance', type=int, default=None)
     args = parser.parse_args()
     print(args)
 

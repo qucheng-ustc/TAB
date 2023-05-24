@@ -106,6 +106,9 @@ class PryClient(Client):
 # this client will return a combined addr (addr[0], addr[1]) for every accounts
 # according to their first tx
 class DoubleAddrClient(Client):
+    def __init__(self, txs, tx_rate=1000):
+        super().__init__(txs, tx_rate=tx_rate)
+
     def reset(self, ptx=0):
         self.account_map = {} # record existing accounts
         return super().reset(ptx=ptx)
@@ -140,4 +143,6 @@ class DoubleAddrClient(Client):
         txs = self.txs.iloc[self.ptx:min(self.ptx+self.tx_rate*time_interval, len(self.txs))]
         if not peek:
             self.ptx += len(txs)
-        return txs.apply(lambda tx:self.new_tx(tx),axis=1)
+            return txs.apply(lambda tx:self.new_tx(tx),axis=1)
+        else:
+            return txs.apply(lambda tx:self.new_tx(tx.copy()),axis=1)

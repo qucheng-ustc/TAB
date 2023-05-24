@@ -3,7 +3,7 @@ from arrl.dataloader import get_default_dataloader
 from arrl.preprocess import drop_contract_creation_tx
 from graph.graph import Graph
 from graph.partition import Partition
-from strategy.account import StaticAccountAllocate, TableAccountAllocate, DoubleAccountAllocate
+from strategy.account import StaticAccountAllocate, TableDoubleAccountAllocate
 from env.eth2 import Eth2v3Simulator
 from env.client import DoubleAddrClient
 
@@ -15,9 +15,7 @@ def test_double(txs, method=['last', 'past'], past=[10], args=None):
     block_interval = args.block_interval
     print('Double account addr:')
     graph_path = './metis/graphs/test_double.txt'
-    base_allocator = TableAccountAllocate(n_shards=n_shards, fallback=None)
-    fallback_allocator = TableAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
-    allocator = DoubleAccountAllocate(n_shards=n_shards, base=base_allocator, fallback=fallback_allocator)
+    allocator = TableDoubleAccountAllocate(n_shards=n_shards, fallback=StaticAccountAllocate(n_shards=n_shards))
     txs = txs[['from','to','gas']]
     client = DoubleAddrClient(txs=txs, tx_rate=tx_rate)
     simulator = Eth2v3Simulator(client=client, allocate=allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval)
@@ -54,15 +52,13 @@ def test_double(txs, method=['last', 'past'], past=[10], args=None):
     if 'last' in method:
         print('Table updated by last step partition:')
         simulator.reset()
-        base_account_table = {}
-        fallback_account_table = {}
+        account_table = {}
         for _ in tqdm(range(simulator.max_epochs)):
-            done = simulator.step((base_account_table, fallback_account_table))
+            done = simulator.step(account_table)
             if done: break
             graph = Graph(simulator.get_block_txs(-simulator.n_blocks)).save(graph_path)
             parts = Partition(graph_path).partition(n_shards)
-            base_account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
-            fallback_account_table = {a[1]:s for a,s in zip(graph.vertex_idx,parts)}
+            account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
         print(simulator.info(simulator.n_blocks))
     
     if 'past' in method:

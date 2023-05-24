@@ -90,6 +90,39 @@ class Graph:
         assert((vertex_idx==self.vertex_idx).all())
         self.v_weights = v_weights
         return self
+    
+    @classmethod
+    def load(cls, path):
+        graph = object.__new__(cls)
+        with open(path, 'r') as f:
+            header = f.readline().strip().split(' ')
+            n_vertex, n_edge, format = int(header[0]), int(header[1]), header[2]
+            v_weight = format=='011'
+            nexts = dict()
+            weights = dict()
+            if v_weight:
+                v_weights = np.zeros(shape=n_vertex, dtype=int)
+            for v, line in f:
+                data = line.strip().split(' ')
+                if v_weight:
+                    v_weights[v] = int(data[0])
+                    data = data[1:]
+                for k in range(0,len(data),2):
+                    v_next, weight = int(data[k]), int(data[k+1])
+                    if v in nexts:
+                        nexts[v].append(v_next)
+                    else:
+                        nexts[v] = [v_next]
+                    v_from, v_to = min(v, v_next), max(v, v_next)
+                    weights[(v_from, v_to)] = weight
+        graph.n_vertex = n_vertex
+        graph.n_edge = n_edge
+        graph.v_weight = v_weight
+        graph.nexts = nexts
+        graph.weights = weights
+        if v_weight:
+            graph.v_weights = v_weights
+        return graph
 
     def save(self, path, v_weight=None):
         if v_weight is None:

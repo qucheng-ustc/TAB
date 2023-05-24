@@ -16,9 +16,14 @@ class Partition:
             v_weights = graph.v_weights
             self.metis_graph = metis.adjlist_to_metis(adjlist, nodew=v_weights)
 
-    def partition(self, nparts, target_weights=None, debug=False):
+    def partition(self, nparts, target_weights=None, allow_imbalance=None, debug=False):
         if isinstance(self.metis_graph, str):
+            if debug:
+                with open(self.metis_graph, 'r') as f:
+                    print('Partition graph:', f.readline().strip())
             options = ['gpmetis', self.metis_graph, str(nparts)]
+            if allow_imbalance is not None:
+                options.append(f'-ufactor={allow_imbalance}')
             if target_weights is not None:
                 tpwgts_path = f'{self.metis_graph}.tpwgts.{nparts}'
                 with open(tpwgts_path, 'w') as f:

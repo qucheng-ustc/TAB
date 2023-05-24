@@ -4,23 +4,208 @@ from collections import deque
 import multiprocessing as mp
 
 class Protocol:
+    # stop simulation
     MSG_TYPE_CTRL_RESET = 0x00
-
+    # control simulation
     MSG_TYPE_CTRL_BLOCK = 0x01
     MSG_TYPE_CTRL_ALLOCATION = 0x02
+    MSG_TYPE_CTRL_ACTION = 0x14
     MSG_TYPE_CTRL_TRANSITION = 0x03
     MSG_TYPE_CTRL_REPLY = 0x10
-
+    # get info
     MSG_TYPE_CTRL_INFO = 0x04
     MSG_TYPE_CTRL_REPORT = 0x11
-
-    MSG_TYPE_CTRL_SYNC = 0x05
-    MSG_TYPE_CTRL_ACK = 0x12
-
+    # sync blocks
+    MSG_TYPE_CTRL_SYNC_BLOCK = 0x05
+    MSG_TYPE_CTRL_SEND_BLOCK = 0x12
+    # sync tx pools
+    MSG_TYPE_CTRL_SYNC_POOL = 0x06
+    MSG_TYPE_CTRL_SEND_POOL = 0x13
+    # send client txs
     MSG_TYPE_CLIENT_TX = 0x20
-
+    # forward tx between shards
     MSG_TYPE_SHARD_FORWARD_TX = 0x30
     MSG_TYPE_SHARD_TX = 0x31
+    # shard local graph
+    MSG_TYPE_SHARD_GRAPH = 0x32
+    # allocation table
+    MSG_TYPE_SHARD_ALLOCATION = 0x33
+
+class LocalGraph:
+    def __init__(self, blocks):
+        vertex_list = []
+        vertex_dict = {}
+        edge_table = []
+        n_vertex = 0
+        n_edge = 0
+        for block in blocks:
+            for from_addr, to_addr, *_ in block:
+                if from_addr not in vertex_dict:
+                    vertex_dict[from_addr] = len(vertex_list)
+                    vertex_list.append(from_addr)
+                    edge_table.append({})
+                    n_vertex += 1
+                if to_addr not in vertex_dict:
+                    vertex_dict[to_addr] = len(vertex_list)
+                    vertex_list.append(to_addr)
+                    edge_table.append({})
+                    n_vertex += 1
+                from_idx, to_idx = vertex_dict[from_addr], vertex_dict[to_addr]
+                idx_min, idx_max = min(from_idx, to_idx), max(from_idx, to_idx)
+                edge_dict = edge_table[idx_min]
+                if idx_max not in edge_dict:
+                    edge_dict[idx_max] = 1
+                    n_edge += 1
+                else:
+                    edge_dict[idx_max] += 1
+        self.vertex_list = vertex_list
+        self.edge_weights = np.zeros(shape=n_edge, dtype=np.int)
+        self.edge_dests = np.zeros(shape=n_edge, dtype=np.int)
+        self.edge_splits = []
+        i = 0
+        for edge_dict in edge_table:
+            for edge_dest, edge_weight in edge_dict.items():
+                self.edge_weights[i] = edge_weight
+                self.edge_dests[i] = edge_dest
+                i += 1
+            self.edge_splits.append(i)
+    
+    def save(self, path='./metis/graphs/local_graph.txt', debug=False):
+        self.save_path = path
+        n_vertex = len(self.vertex_list)
+        n_edge = len(self.edge_weights)
+        if debug:
+            print(path, n_vertex, n_edge)
+        with open(path, 'w') as f:
+            f.write(f'{n_vertex} {n_edge}\n')
+            i = 0
+            for v in range(n_vertex):
+                vertex = self.vertex_list[v]
+                if isinstance(vertex, str):
+                    f.write(f'{vertex}')
+                elif isinstance(vertex, tuple):
+                    f.write(f'({vertex[0]},{vertex[1]})')
+                while i<self.edge_splits[v]:
+                    v_next = self.edge_dests[i]
+                    weight = self.edge_weights[i]
+                    f.write(f' {v_next+1} {weight}')
+                    i += 1
+                f.write('\n')
+        return self
+    
+    @classmethod
+    def load(cls, path, debug=False):
+        graph = object.__new__(cls)
+        with open(path, 'r') as f:
+            header = f.readline().strip()
+            header = header.split(' ')
+            n_vertex, n_edge = int(header[0]), int(header[1])
+            vertex_list = []
+            edge_weights = np.zeros(shape=n_edge, dtype=np.int)
+            edge_dests = np.zeros(shape=n_edge, dtype=np.int)
+            edge_splits = []
+            i = 0
+            for v, line in enumerate(f):
+                data = line.strip().split(' ')
+                vertex_addr = data[0].strip('()').split(',')
+                vertex_list.append((vertex_addr[0],vertex_addr[1]))
+                data = data[1:]
+                for k in range(0, len(data), 2):
+                    dest, weight = int(data[k])-1, int(data[k+1])
+                    edge_weights[i] = weight
+                    edge_dests[i] = dest
+                    i += 1
+                edge_splits.append(i)
+        if debug:
+            print(path, n_vertex, n_edge)
+        graph.vertex_list = vertex_list
+        graph.edge_weights = edge_weights
+        graph.edge_dests = edge_dests
+        graph.edge_splits = edge_splits
+        return graph
+
+class GlobalGraph:
+    def __init__(self, local_graphs: list[LocalGraph]):
+        vertex_list = []
+        vertex_dict = {}
+        edge_table = []
+        n_vertex = 0
+        n_edge = 0        
+        for local_graph in local_graphs:
+            local_vi_map = []
+            local_n_vertex = len(local_graph.vertex_list)
+            for vertex in local_graph.vertex_list:
+                if vertex not in vertex_dict:
+                    vertex_dict[vertex] = len(vertex_list)
+                    vertex_list.append(vertex)
+                    edge_table.append({})
+                    n_vertex += 1
+                local_vi_map.append(vertex_dict[vertex])
+            i = 0
+            vertex_weights = np.zeros(n_vertex, dtype=int)
+            for local_vi in range(local_n_vertex):
+                vi = local_vi_map[local_vi]
+                edges_vi = edge_table[vi]
+                while i<local_graph.edge_splits[local_vi]:
+                    edge_weight = local_graph.edge_weights[i]
+                    edge_dest = local_graph.edge_dests[i]
+                    i += 1
+                    vj = local_vi_map[edge_dest]
+                    if vi==vj: # connected to self
+                        vertex_weights[vi] = max(vertex_weights[vi], edge_weight)
+                        continue
+                    if vj not in edges_vi:
+                        edges_vi[vj] = edge_weight
+                        n_edge += 1
+                    elif edge_weight>edges_vi[vj]:
+                        edges_vi[vj] = edge_weight
+                    edges_vj = edge_table[vj]
+                    if vi not in edges_vj:
+                        edges_vj[vi] = edge_weight
+                    elif edge_weight>edges_vj[vi]:
+                        edges_vj[vi] = edge_weight
+        for v, edge_dict in enumerate(edge_table):
+            for weight in edge_dict.values():
+                vertex_weights[v] += weight
+        self.vertex_list = vertex_list
+        self.edge_table = edge_table
+        self.n_vertex = n_vertex
+        self.n_edge = n_edge
+        self.vertex_weights = vertex_weights
+
+    def save(self, v_weight=True, path='./metis/graphs/global_graph.txt', debug=False):
+        self.save_path = path
+        if debug:
+            n_edge = 0
+            weight_dict = {}
+        with open(path, 'w') as f:
+            format = '011' if v_weight else '001'
+            f.write(f'{self.n_vertex} {self.n_edge} {format}\n')
+            for v in range(self.n_vertex):
+                space = ''
+                if v_weight:
+                    f.write(f'{self.vertex_weights[v]}')
+                    space = ' '
+                for v_next, weight in self.edge_table[v].items():
+                    f.write(f'{space}{v_next+1} {weight}')
+                    space = ' '
+                    if debug:
+                        n_edge += 1
+                        weight_dict[(min(v,v_next),max(v,v_next))] = weight
+                f.write('\n')
+        if debug:
+            print('Edges:', n_edge, n_edge//2)
+            print('Edge weights:', len(weight_dict))
+        return self
+
+    def partition(self, n, v_weight=True, save_path='./metis/graphs/global_graph.txt', debug=False):
+        if self.n_vertex==0:
+            return []
+        self.save(v_weight=v_weight, path=save_path)
+        from graph.partition import Partition
+        part = Partition(self.save_path)
+        parts = part.partition(n, debug=debug)
+        return parts
 
 class NetworkSimulator:
     # simple full connected network
@@ -41,16 +226,19 @@ class NetworkSimulator:
     def recv(self, id):
         return self.queues[id].get()
     
-    def ctrl(self, msg_type):
-        self.broadcast(-1, msg_type=msg_type, content=None)
+    def ctrl(self, msg_type, content=None):
+        self.broadcast(-1, msg_type=msg_type, content=content)
 
     def report(self, id, msg_type, content):
         self.report_queue.put((id, msg_type, content))
     
+    def get_report(self):
+        return self.report_queue.get()
+    
     def join(self, msg_type):
         reply = dict()
         while len(reply)<len(self.queues):
-            id, report_type, content = self.report_queue.get()
+            id, report_type, content = self.get_report()
             if report_type == msg_type:
                 reply[id] = content
         return reply
@@ -61,84 +249,115 @@ class NetworkSimulator:
         self.report_queue.close()
         self.closed = True
 
-def shard_worker(id: int, net: NetworkSimulator, allocate, tx_per_block):
-    tx_pool = deque()
-    tx_forward = deque()
-    blocks = []
-    while True:
-        from_id, msg_type, content = net.recv(id)
-        match msg_type:
-            case Protocol.MSG_TYPE_CTRL_RESET:
-                return
-            case Protocol.MSG_TYPE_CTRL_INFO:
-                net.report(id, Protocol.MSG_TYPE_CTRL_REPORT, (blocks, tx_pool, tx_forward))
-            case Protocol.MSG_TYPE_CTRL_BLOCK:
-                # each shard produce one block
-                block_height = len(blocks)
-                block_txs = []
-                while len(block_txs)<tx_per_block and len(tx_forward)>0:
-                    if tx_forward[0][5]>=block_height:
-                        break
-                    # only append committed forward tx
-                    block_txs.append(tx_forward.popleft())
-                while len(block_txs)<tx_per_block and len(tx_pool)>0:
-                    from_addr, to_addr, timestamp, from_shard, to_shard = tx_pool.popleft()
-                    tx = (from_addr, to_addr, timestamp, from_shard, to_shard, block_height)
-                    block_txs.append(tx)
-                    # cross shard tx forward to target shard
-                    if to_shard!=id:
-                        net.send(id, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
-                blocks.append(block_txs)
-                net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
-            case Protocol.MSG_TYPE_SHARD_FORWARD_TX:
-                tx = content
-                tx_forward.append(tx)
-            case Protocol.MSG_TYPE_CTRL_ALLOCATION:
-                net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
-            case Protocol.MSG_TYPE_CTRL_TRANSITION:
-                # re-allocate tx pool
-                new_tx_pool = deque()
-                new_tx_forward = deque()
-                for from_addr, to_addr, timestamp, *_ in tx_pool:
-                    from_shard = allocate.allocate(from_addr)
-                    to_shard = allocate.allocate(to_addr)
-                    tx = (from_addr, to_addr, timestamp, from_shard, to_shard)
-                    if from_shard != id:
-                        net.send(id, from_shard, Protocol.MSG_TYPE_SHARD_TX, tx)
-                    else:
-                        new_tx_pool.append(tx)
-                tx_pool = new_tx_pool
-                for from_addr, to_addr, timestamp, _, _, block_height in tx_forward:
-                    from_shard = allocate.allocate(from_addr)
-                    to_shard = allocate.allocate(to_addr)
-                    tx = (from_addr, to_addr, timestamp, from_shard, to_shard, block_height)
-                    if to_shard != id:
-                        net.send(id, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
-                    else:
-                        new_tx_forward.append(tx)
-                tx_forward = new_tx_forward
-                net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
-            case Protocol.MSG_TYPE_SHARD_TX | Protocol.MSG_TYPE_CLIENT_TX:
-                tx = content
-                tx_pool.append(tx)
-
-class ShardSimulator:
-    def __init__(self, id: int, net: NetworkSimulator, allocate, tx_per_block):
+class ShardSimulator(mp.Process):
+    def __init__(self, id: int, net: NetworkSimulator, allocate, tx_per_block, n_blocks, n_shards, shard_allocation, *, daemon=True):
+        super().__init__(daemon=daemon)
         self.id = id
         self.net = net
-        self.proc = mp.Process(target=shard_worker, kwargs=dict(id=id, net=net, allocate=allocate, tx_per_block=tx_per_block))
+        self.allocate = allocate
+        self.tx_per_block = tx_per_block
+        self.n_blocks = n_blocks
+        self.n_shards = n_shards
+        self.shard_allocation = shard_allocation
 
-    def start(self):
-        self.proc.start()
-    
-    def join(self):
-        self.proc.join()
-
-    def close(self):
-        self.proc.close()
+    def run(self):
+        id = self.id
+        net = self.net
+        allocate = self.allocate
+        tx_per_block = self.tx_per_block
+        n_blocks = self.n_blocks
+        n_shards = self.n_shards
+        shard_allocation = self.shard_allocation
+        tx_pool = deque()
+        tx_forward = deque()
+        blocks = []
+        if id==0:
+            local_graphs = dict()
+        while True:
+            from_id, msg_type, content = net.recv(id)
+            match msg_type:
+                case Protocol.MSG_TYPE_CTRL_RESET:
+                    return
+                case Protocol.MSG_TYPE_CTRL_INFO:
+                    net.report(id, Protocol.MSG_TYPE_CTRL_REPORT, (blocks, tx_pool, tx_forward))
+                case Protocol.MSG_TYPE_CTRL_BLOCK:
+                    # each shard produce one block
+                    block_height = len(blocks)
+                    block_txs = []
+                    while len(block_txs)<tx_per_block and len(tx_forward)>0:
+                        if tx_forward[0][5]>=block_height:
+                            break
+                        # only append committed forward tx
+                        block_txs.append(tx_forward.popleft())
+                    while len(block_txs)<tx_per_block and len(tx_pool)>0:
+                        from_addr, to_addr, timestamp, from_shard, to_shard = tx_pool.popleft()
+                        tx = (from_addr, to_addr, timestamp, from_shard, to_shard, block_height)
+                        block_txs.append(tx)
+                        # cross shard tx forward to target shard
+                        if to_shard!=id:
+                            net.send(id, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
+                    blocks.append(block_txs)
+                    net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
+                case Protocol.MSG_TYPE_SHARD_FORWARD_TX:
+                    tx = content
+                    tx_forward.append(tx)
+                case Protocol.MSG_TYPE_CTRL_ALLOCATION if shard_allocation:
+                    # construct local graph and send to shard 0
+                    local_graph = LocalGraph(blocks[max(0,len(blocks)-n_blocks):len(blocks)])
+                    if id == 0:
+                        # collects local graphs and construct global graph, partition it and broadcast account allocation table
+                        local_graphs[id] = local_graph
+                    else:
+                        net.send(id, 0, Protocol.MSG_TYPE_SHARD_GRAPH, local_graph)
+                case Protocol.MSG_TYPE_CTRL_ALLOCATION: # use external allocation method
+                    allocate.apply(content)
+                    net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
+                case Protocol.MSG_TYPE_SHARD_GRAPH if id == 0:
+                    local_graphs[from_id] = content
+                    if len(local_graphs)>=n_shards:
+                        global_graph = GlobalGraph(local_graphs=local_graphs.values())
+                        parts = global_graph.partition(n_shards, debug=True)
+                        account_table = {a:s for a,s in zip(global_graph.vertex_list,parts)}
+                        local_graphs = {}
+                        net.broadcast(id, Protocol.MSG_TYPE_SHARD_ALLOCATION, account_table)
+                        net.report(id, Protocol.MSG_TYPE_CTRL_ACTION, account_table) # report latest allocation action to client
+                case Protocol.MSG_TYPE_SHARD_ALLOCATION:
+                    allocate.apply(content)
+                    net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
+                case Protocol.MSG_TYPE_CTRL_TRANSITION:
+                    # re-allocate tx pool
+                    new_tx_pool = deque()
+                    new_tx_forward = deque()
+                    for from_addr, to_addr, timestamp, *_ in tx_pool:
+                        from_shard = allocate.allocate(from_addr)
+                        to_shard = allocate.allocate(to_addr)
+                        tx = (from_addr, to_addr, timestamp, from_shard, to_shard)
+                        if from_shard != id:
+                            net.send(id, from_shard, Protocol.MSG_TYPE_SHARD_TX, tx)
+                        else:
+                            new_tx_pool.append(tx)
+                    tx_pool = new_tx_pool
+                    for from_addr, to_addr, timestamp, _, _, block_height in tx_forward:
+                        from_shard = allocate.allocate(from_addr)
+                        to_shard = allocate.allocate(to_addr)
+                        tx = (from_addr, to_addr, timestamp, from_shard, to_shard, block_height)
+                        if to_shard != id:
+                            net.send(id, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
+                        else:
+                            new_tx_forward.append(tx)
+                    tx_forward = new_tx_forward
+                    net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
+                case Protocol.MSG_TYPE_SHARD_TX | Protocol.MSG_TYPE_CLIENT_TX:
+                    tx = content
+                    tx_pool.append(tx)
+                case Protocol.MSG_TYPE_CTRL_SYNC_BLOCK:
+                    start = content
+                    net.report(id, Protocol.MSG_TYPE_CTRL_SEND_BLOCK, blocks[start:])
+                case Protocol.MSG_TYPE_CTRL_SYNC_POOL:
+                    net.report(id, Protocol.MSG_TYPE_CTRL_SEND_POOL, (tx_pool, tx_forward))
 
 class HarmonySimulator:
-    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10):
+    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True):
         self.tx_per_block = tx_per_block
         self.block_interval = block_interval
         self.n_blocks = n_blocks
@@ -158,6 +377,8 @@ class HarmonySimulator:
         self.network = None
         self.shards = []
 
+        self.shard_allocation = shard_allocation
+    
     def close(self):
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_RESET)
         for s in self.shards: s.join()
@@ -179,7 +400,10 @@ class HarmonySimulator:
         self.shard_ids = list(range(self.n_shards))
         self.network = NetworkSimulator(self.shard_ids)
 
-        self.shards = [ShardSimulator(id, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block) for id in self.shard_ids]
+        self.shards = [
+            ShardSimulator(id, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation)
+            for id in self.shard_ids]
         for s in self.shards: s.start()
         return self.client.done(time_interval=self.epoch_time)
 
@@ -201,7 +425,24 @@ class HarmonySimulator:
         assert(end<=block_height)
         return start, end
     
+    def sync_block(self):
+        cur = self.block_height()
+        if cur == self.simulate_blocks:
+            return
+        self.network.ctrl(Protocol.MSG_TYPE_CTRL_SYNC_BLOCK, cur)
+        results = self.network.join(Protocol.MSG_TYPE_CTRL_SEND_BLOCK)
+        for shard, blocks in results.items():
+            self.sblock[shard].extend(blocks)
+    
+    def sync_pool(self):
+        self.network.ctrl(Protocol.MSG_TYPE_CTRL_SYNC_POOL)
+        results = self.network.join(Protocol.MSG_TYPE_CTRL_SEND_POOL)
+        for shard, (tx_pool, tx_forward) in results.items():
+            self.stx_pool[shard] = tx_pool
+            self.stx_forward[shard] = tx_forward
+    
     def get_block_n_txs(self, start=0, end=None):
+        self.sync_block()
         start, end = self._adjust_block_slice(start, end)
         n_txs = [0]*self.n_shards
         for shard,blocks in enumerate(self.sblock):
@@ -210,6 +451,7 @@ class HarmonySimulator:
         return n_txs
 
     def get_block_txs(self, start=0, end=None):
+        self.sync_block()
         start, end = self._adjust_block_slice(start, end)
         txs = []
         for shard,blocks in enumerate(self.sblock):
@@ -220,6 +462,7 @@ class HarmonySimulator:
         return pd.DataFrame(txs, columns=['shard', 'block', 'from', 'to'])
     
     def get_pending_txs(self, forward=False):
+        self.sync_pool()
         txs = []
         for shard, shard_tx_pool in enumerate(self.stx_pool):
             for from_addr, to_addr, *_ in shard_tx_pool:
@@ -236,12 +479,14 @@ class HarmonySimulator:
         # 3. Block: All shards process transactions and produce blocks
 
         # Allocation & Transition, client is shutdown during this period
-        self.network.ctrl(Protocol.MSG_TYPE_CTRL_ALLOCATION)
+        self.network.ctrl(Protocol.MSG_TYPE_CTRL_ALLOCATION, action)
         self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
-        self.simulate_time += self.block_interval # simply add intervals
+        if self.shard_allocation:
+            id, msg_type, action = self.network.get_report()
+        self.allocate.apply(action)
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_TRANSITION)
         self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
-        self.simulate_time += self.block_interval # simply add intervals
+        # self.simulate_time += self.block_interval # add time intervals
 
         # start simulation
         for _ in range(self.n_blocks):
@@ -252,7 +497,7 @@ class HarmonySimulator:
                 to_shard = self.allocate.allocate(to_addr)
                 #tx store in tuple: (from_addr, to_addr, timestamp, from_shard, to_shard)
                 tx = (from_addr, to_addr, timestamp, from_shard, to_shard)
-                self.network.send(-1, to_shard, Protocol.MSG_TYPE_CLIENT_TX, tx)
+                self.network.send(-1, from_shard, Protocol.MSG_TYPE_CLIENT_TX, tx)
                 timestamp += 1./self.tx_rate
             self.network.ctrl(Protocol.MSG_TYPE_CTRL_BLOCK)
             self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
