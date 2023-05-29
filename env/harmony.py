@@ -270,13 +270,25 @@ class GlobalGraph:
             print('Edge weights:', len(weight_dict))
         return self
 
-    def partition(self, n, v_weight=True, save_path='./metis/graphs/global_graph.txt', debug=False):
+    def partition(self, n, v_weight=True, debug=False):
         if self.n_vertex==0:
             return {}
-        self.save(v_weight=v_weight, path=save_path)
-        from graph.partition import Partition
-        part = Partition(self.save_path)
-        parts = part.partition(n, debug=debug)
+        import mymetis
+        xadj = [0]
+        adjncy = []
+        adjwgt = []
+        if v_weight:
+            vwgt = []
+        i = 0
+        for v in range(self.n_vertex):
+            if v_weight:
+                vwgt.append(self.vertex_weights[v])
+            for v_next, weight in self.edge_table[v].items():
+                adjncy.append(v_next)
+                adjwgt.append(weight)
+                i += 1
+            xadj.append(i)
+        _, parts = mymetis.partition(xadj=xadj, adjncy=adjncy, vwgt=vwgt, adjwgt=adjwgt, nparts=n)
         partition_table = {a:s for a,s in zip(self.vertex_list,parts)}
         return partition_table
 
