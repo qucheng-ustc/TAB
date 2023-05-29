@@ -9,7 +9,6 @@ class Protocol:
     # control simulation
     MSG_TYPE_CTRL_BLOCK = 0x01
     MSG_TYPE_CTRL_ALLOCATION = 0x02
-    MSG_TYPE_CTRL_ACTION = 0x14
     MSG_TYPE_CTRL_TRANSITION = 0x03
     MSG_TYPE_CTRL_REPLY = 0x10
     # get info
@@ -21,6 +20,9 @@ class Protocol:
     # sync tx pools
     MSG_TYPE_CTRL_SYNC_POOL = 0x06
     MSG_TYPE_CTRL_SEND_POOL = 0x13
+    # query latest action
+    MSG_TYPE_QUERY_ACTION = 0x07
+    MSG_TYPE_QUERY_ACTION_REPLY = 0x14
     # send client txs
     MSG_TYPE_CLIENT_TX = 0x20
     # forward tx between shards
@@ -124,13 +126,76 @@ class LocalGraph:
         graph.edge_splits = edge_splits
         return graph
 
+    def compress(self, weight_limit=1, vweight_limit=1):
+        # remove any edge with weight<weight_limit
+        # remove any vertex with vweight<vweight_limit
+        n_vertex = len(self.vertex_list)
+        #n_edge = len(self.edge_weights)
+        
+        vertex_list = []
+        edge_weights = []
+        edge_dests = []
+        edge_splits = []
+
+        # compute vertex weights
+        vweights = np.zeros(shape=n_vertex, dtype=int)
+        i = 0
+        for v in range(n_vertex):
+            while i<self.edge_splits[v]:
+                v_next = self.edge_dests[i]
+                weight = self.edge_weights[i]
+                i += 1
+                vweights[v] += weight
+                vweights[v_next] += weight
+        
+        # remove vertexes
+        vmap = []
+        for v in range(n_vertex):
+            vweight = vweights[v]
+            if vweight>=vweight_limit:
+                vmap.append(len(vertex_list))
+                vertex_list.append(self.vertex_list[v])
+            else:
+                vmap.append(-1)
+
+        # remove edges
+        i = 0
+        for v in range(n_vertex):
+            if vmap[v]<0: # vertex removed, skip
+                i = self.edge_splits[v]
+                continue
+            while i<self.edge_splits[v]:
+                v_next = self.edge_dests[i]
+                weight = self.edge_weights[i]
+                i += 1
+                v_next = vmap[v_next]
+                if v_next<0: # vertex removed, skip
+                    continue
+                if weight>=weight_limit:
+                    edge_dests.append(v_next)
+                    edge_weights.append(weight)
+            edge_splits.append(len(edge_weights))
+        
+        # update graph
+        self.vertex_list = vertex_list
+        self.vweights = np.zeros(shape=len(vertex_list), dtype=int)
+        for v, vn in enumerate(vmap):
+            if vn>=0:
+                self.vweights[vn] = vweights[v]
+        self.edge_dests = edge_dests
+        self.edge_weights = edge_weights
+        self.edge_splits = edge_splits
+
+
 class GlobalGraph:
     def __init__(self, local_graphs: list[LocalGraph]):
         vertex_list = []
         vertex_dict = {}
         edge_table = []
         n_vertex = 0
-        n_edge = 0        
+        n_edge = 0
+        local_vertex_weights = []
+        vertex_weights = []
         for local_graph in local_graphs:
             local_vi_map = []
             local_n_vertex = len(local_graph.vertex_list)
@@ -139,10 +204,15 @@ class GlobalGraph:
                     vertex_dict[vertex] = len(vertex_list)
                     vertex_list.append(vertex)
                     edge_table.append({})
+                    vertex_weights.append(0)
+                    local_vertex_weights.append(0)
                     n_vertex += 1
                 local_vi_map.append(vertex_dict[vertex])
             i = 0
-            vertex_weights = np.zeros(n_vertex, dtype=int)
+            if hasattr(local_graph, 'vweights'):
+                for local_vi in range(local_n_vertex):
+                    vi = local_vi_map[local_vi]
+                    local_vertex_weights[vi] = max(local_vertex_weights[vi], local_graph.vweights[local_vi])
             for local_vi in range(local_n_vertex):
                 vi = local_vi_map[local_vi]
                 edges_vi = edge_table[vi]
@@ -152,7 +222,7 @@ class GlobalGraph:
                     i += 1
                     vj = local_vi_map[edge_dest]
                     if vi==vj: # connected to self
-                        vertex_weights[vi] = max(vertex_weights[vi], edge_weight)
+                        vertex_weights[vi] = max(vertex_weights[vi], 2*edge_weight)
                         continue
                     if vj not in edges_vi:
                         edges_vi[vj] = edge_weight
@@ -167,6 +237,8 @@ class GlobalGraph:
         for v, edge_dict in enumerate(edge_table):
             for weight in edge_dict.values():
                 vertex_weights[v] += weight
+        for v in range(n_vertex):
+            vertex_weights[v] = max(vertex_weights[v], local_vertex_weights[v])
         self.vertex_list = vertex_list
         self.edge_table = edge_table
         self.n_vertex = n_vertex
@@ -200,12 +272,13 @@ class GlobalGraph:
 
     def partition(self, n, v_weight=True, save_path='./metis/graphs/global_graph.txt', debug=False):
         if self.n_vertex==0:
-            return []
+            return {}
         self.save(v_weight=v_weight, path=save_path)
         from graph.partition import Partition
         part = Partition(self.save_path)
         parts = part.partition(n, debug=debug)
-        return parts
+        partition_table = {a:s for a,s in zip(self.vertex_list,parts)}
+        return partition_table
 
 class NetworkSimulator:
     # simple full connected network
@@ -232,13 +305,16 @@ class NetworkSimulator:
     def report(self, id, msg_type, content):
         self.report_queue.put((id, msg_type, content))
     
-    def get_report(self):
+    def query(self, id, msg_type, content=None):
+        self.send(-1, id, msg_type, content)
+
+    def get_reply(self):
         return self.report_queue.get()
     
     def join(self, msg_type):
         reply = dict()
         while len(reply)<len(self.queues):
-            id, report_type, content = self.get_report()
+            id, report_type, content = self.get_reply()
             if report_type == msg_type:
                 reply[id] = content
         return reply
@@ -250,7 +326,7 @@ class NetworkSimulator:
         self.closed = True
 
 class ShardSimulator(mp.Process):
-    def __init__(self, id: int, net: NetworkSimulator, allocate, tx_per_block, n_blocks, n_shards, shard_allocation, *, daemon=True):
+    def __init__(self, id: int, net: NetworkSimulator, allocate, tx_per_block, n_blocks, n_shards, shard_allocation, compress, *, daemon=True):
         super().__init__(daemon=daemon)
         self.id = id
         self.net = net
@@ -259,6 +335,7 @@ class ShardSimulator(mp.Process):
         self.n_blocks = n_blocks
         self.n_shards = n_shards
         self.shard_allocation = shard_allocation
+        self.compress = compress
 
     def run(self):
         id = self.id
@@ -304,6 +381,8 @@ class ShardSimulator(mp.Process):
                 case Protocol.MSG_TYPE_CTRL_ALLOCATION if shard_allocation:
                     # construct local graph and send to shard 0
                     local_graph = LocalGraph(blocks[max(0,len(blocks)-n_blocks):len(blocks)])
+                    if self.compress is not None:
+                        local_graph.compress(*self.compress)
                     if id == 0:
                         # collects local graphs and construct global graph, partition it and broadcast account allocation table
                         local_graphs[id] = local_graph
@@ -316,11 +395,11 @@ class ShardSimulator(mp.Process):
                     local_graphs[from_id] = content
                     if len(local_graphs)>=n_shards:
                         global_graph = GlobalGraph(local_graphs=local_graphs.values())
-                        parts = global_graph.partition(n_shards, debug=True)
-                        account_table = {a:s for a,s in zip(global_graph.vertex_list,parts)}
+                        account_table = global_graph.partition(n_shards)
                         local_graphs = {}
                         net.broadcast(id, Protocol.MSG_TYPE_SHARD_ALLOCATION, account_table)
-                        net.report(id, Protocol.MSG_TYPE_CTRL_ACTION, account_table) # report latest allocation action to client
+                case Protocol.MSG_TYPE_QUERY_ACTION:
+                    net.report(id, Protocol.MSG_TYPE_QUERY_ACTION_REPLY, account_table) # report latest allocation action to client
                 case Protocol.MSG_TYPE_SHARD_ALLOCATION:
                     allocate.apply(content)
                     net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
@@ -357,7 +436,7 @@ class ShardSimulator(mp.Process):
                     net.report(id, Protocol.MSG_TYPE_CTRL_SEND_POOL, (tx_pool, tx_forward))
 
 class HarmonySimulator:
-    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True):
+    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True, compress=None):
         self.tx_per_block = tx_per_block
         self.block_interval = block_interval
         self.n_blocks = n_blocks
@@ -378,6 +457,7 @@ class HarmonySimulator:
         self.shards = []
 
         self.shard_allocation = shard_allocation
+        self.compress = compress
     
     def close(self):
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_RESET)
@@ -402,7 +482,7 @@ class HarmonySimulator:
 
         self.shards = [
             ShardSimulator(id, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
-                           n_shards=self.n_shards, shard_allocation=self.shard_allocation)
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress)
             for id in self.shard_ids]
         for s in self.shards: s.start()
         return self.client.done(time_interval=self.epoch_time)
@@ -482,7 +562,8 @@ class HarmonySimulator:
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_ALLOCATION, action)
         self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
         if self.shard_allocation:
-            id, msg_type, action = self.network.get_report()
+            self.network.query(0, Protocol.MSG_TYPE_QUERY_ACTION)
+            id, msg_type, action = self.network.get_reply()
         self.allocate.apply(action)
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_TRANSITION)
         self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)

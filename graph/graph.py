@@ -146,6 +146,16 @@ class Graph:
                     space = ' '
                 f.write('\n')
         return self
+    
+    def partition(self, nparts, target_weights=None, allow_imbalance=None, save_path=None, debug=False):
+        if self.n_edge<=0:
+            return {}
+        from graph.partition import Partition
+        if save_path is None:
+            save_path = self.save_path
+        parts = Partition(save_path).partition(nparts=nparts, target_weights=target_weights, allow_imbalance=allow_imbalance, debug=debug)
+        partition_table = {a:s for a,s in zip(self.vertex_idx,parts)}
+        return partition_table
 
 class HotGraph(Graph):
     def __init__(self):

@@ -34,9 +34,11 @@ class PartitionAccountAllocate(AccountAllocate):
         self.fallback = fallback
 
     def apply(self, action):
-        #action is a tuple (account list, partition result) | None
+        #action is a tuple (account list, partition result) | dict | None
         if action is None:
             self.account_table = {}
+        elif isinstance(action, dict):
+            self.account_table = action
         else:
             self.account_table = {a:s for a,s in zip(*action)}
 

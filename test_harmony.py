@@ -41,9 +41,7 @@ def test_harmony(txs, method=['last'], args=None):
         simulator_args['shard_allocation'] = False
         simulator = HarmonySimulator(**simulator_args)
         graph = Graph(txs=client.next(simulator.max_epochs*simulator.epoch_time, peek=True), debug=True).save('./metis/graphs/test_harmony_all.txt')
-        parts = Partition(graph.save_path).partition(n_shards, debug=True)
-        log.print('Parts:', len(parts))
-        account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
+        account_table = graph.partition(n_shards, debug=True)
         table_allocator.set_account_table(account_table)
         simulator.reset()
         for _ in tqdm(range(simulator.max_epochs)):
@@ -64,8 +62,7 @@ def test_harmony(txs, method=['last'], args=None):
             done = simulator.step(account_table)
             if done: break
             graph = Graph(simulator.get_block_txs(-simulator.n_blocks)).save('./metis/graphs/test_harmony_last.txt')
-            parts = Partition(graph.save_path).partition(n_shards)
-            account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
+            account_table = graph.partition(n_shards)
         print(simulator.info(simulator.n_blocks))
     
     if 'shard' in method:
@@ -75,6 +72,7 @@ def test_harmony(txs, method=['last'], args=None):
         table_allocator = TableDoubleAccountAllocate(n_shards=n_shards, fallback=static_allocator)
         simulator_args['allocate'] = table_allocator
         simulator_args['shard_allocation'] = True
+        simulator_args['compress'] = args.compress
         simulator = HarmonySimulator(**simulator_args)
         simulator.reset()
         for epoch in tqdm(range(simulator.max_epochs)):
@@ -93,10 +91,7 @@ def test_harmony(txs, method=['last'], args=None):
         simulator.reset()
         for _ in tqdm(range(simulator.max_epochs)):
             graph = Graph(simulator.get_pending_txs(forward=False)).save('./metis/graphs/test_harmony_pending.txt')
-            account_table = {}
-            if graph.n_edge>0:
-                parts = Partition(graph.save_path).partition(n_shards)
-                account_table = {a:s for a,s in zip(graph.vertex_idx,parts)}
+            account_table = graph.partition(n_shards)
             done = simulator.step(account_table)
             if done: break
         log.print(simulator.info())
@@ -107,6 +102,7 @@ if __name__=='__main__':
     from exp.args import get_default_parser
     parser = get_default_parser(description='test harmony')
     parser.add_argument('--method', type=str, nargs='*', choices=['none', 'all', 'last', 'shard', 'pending'], default=['all'])
+    parser.add_argument('--compress', nargs=2, type=int, default=None)
     args = parser.parse_args()
     if args.n_shards==0: args.n_shards = 1 << args.k
     print(args)
