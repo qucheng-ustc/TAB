@@ -74,11 +74,11 @@ static PyObject *
 mymetis_partition(PyObject *self, PyObject *args, PyObject *kwargs)
 {
     PyObject *xadj_list, *adjncy_list, *vwgt_list, *adjwgt_list, *tpwgts_list=Py_None;
-    long nparts_long=1, ufactor_long=30, dbg_lvl_long=0;
-    static char *kwlist[] = {(char*)"xadj", (char*)"adjncy", (char*)"vwgt", (char*)"adjwgt", (char*)"nparts", (char*)"tpwgts", (char*)"ufactor", (char*)"dbg_lvl", NULL};
+    long nparts_long=1, ufactor_long=30, dbg_lvl_long=0, niter_long=10;
+    static char *kwlist[] = {(char*)"xadj", (char*)"adjncy", (char*)"vwgt", (char*)"adjwgt", (char*)"nparts", (char*)"tpwgts", (char*)"ufactor", (char*)"niter", (char*)"dbg_lvl", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OOOOl|Oll", kwlist,
-            &xadj_list, &adjncy_list, &vwgt_list, &adjwgt_list, &nparts_long, &tpwgts_list, &ufactor_long, &dbg_lvl_long)){
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OOOOl|Olll", kwlist,
+            &xadj_list, &adjncy_list, &vwgt_list, &adjwgt_list, &nparts_long, &tpwgts_list, &ufactor_long, &niter_long, &dbg_lvl_long)){
         return NULL;
     }
 
@@ -87,7 +87,7 @@ mymetis_partition(PyObject *self, PyObject *args, PyObject *kwargs)
     real_t *tpwgts=NULL;
     idx_t *part=NULL, objval=0;
     idx_t options[METIS_NOPTIONS];
-    idx_t nparts=nparts_long, ufactor=ufactor_long, dbg_lvl=dbg_lvl_long;
+    idx_t nparts=nparts_long, ufactor=ufactor_long, dbg_lvl=dbg_lvl_long, niter=niter_long;
     int status = 0;
 
     nvtxs = PyList_Size(xadj_list)-1;
@@ -115,6 +115,7 @@ mymetis_partition(PyObject *self, PyObject *args, PyObject *kwargs)
     options[METIS_OPTION_SEED] = -1;
     options[METIS_OPTION_NCUTS] = nparts;
     options[METIS_OPTION_NUMBERING] = 0;
+    options[METIS_OPTION_NITER] = niter;
     options[METIS_OPTION_UFACTOR] = ufactor;
     options[METIS_OPTION_DBGLVL] = dbg_lvl;
 

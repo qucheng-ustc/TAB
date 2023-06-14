@@ -196,7 +196,8 @@ class GlobalGraph:
         n_edge = 0
         local_vertex_weights = []
         vertex_weights = []
-        for local_graph in local_graphs:
+        old_partition = {}
+        for shard, local_graph in enumerate(local_graphs):
             local_vi_map = []
             local_n_vertex = len(local_graph.vertex_list)
             for vertex in local_graph.vertex_list:
@@ -212,7 +213,10 @@ class GlobalGraph:
             if hasattr(local_graph, 'vweights'):
                 for local_vi in range(local_n_vertex):
                     vi = local_vi_map[local_vi]
-                    local_vertex_weights[vi] = max(local_vertex_weights[vi], local_graph.vweights[local_vi])
+                    local_vweight = local_graph.vweights[local_vi]
+                    if local_vweight>0:
+                        old_partition[vi] = shard
+                    local_vertex_weights[vi] = max(local_vertex_weights[vi], local_vweight)
             for local_vi in range(local_n_vertex):
                 vi = local_vi_map[local_vi]
                 edges_vi = edge_table[vi]
@@ -244,6 +248,7 @@ class GlobalGraph:
         self.n_vertex = n_vertex
         self.n_edge = n_edge
         self.vertex_weights = vertex_weights
+        self.old_partition = old_partition
 
     def save(self, v_weight=True, path='./metis/graphs/global_graph.txt', debug=False):
         self.save_path = path
@@ -270,7 +275,7 @@ class GlobalGraph:
             print('Edge weights:', len(weight_dict))
         return self
 
-    def partition(self, n, v_weight=True, debug=False):
+    def partition(self, n, v_weight=True, match=False, debug=False):
         if self.n_vertex==0:
             return {}
         import mymetis
@@ -289,7 +294,22 @@ class GlobalGraph:
                 i += 1
             xadj.append(i)
         _, parts = mymetis.partition(xadj=xadj, adjncy=adjncy, vwgt=vwgt, adjwgt=adjwgt, nparts=n)
-        partition_table = {a:s for a,s in zip(self.vertex_list,parts)}
+        if match:
+            import munkres
+            matrix = np.zeros(shape=(n,n), dtype=int)
+            for v in range(self.n_vertex):
+                part = parts[v]
+                old_part = self.old_partition[v]
+                matrix[part,old_part] += 1
+            cost_matrix = munkres.make_cost_matrix(matrix)
+            m = munkres.Munkres()
+            indexes = m.compute(cost_matrix)
+            part_match = {}
+            for row, column in part_match:
+                part_match[row] = column
+            partition_table = {a:part_match[s] for a,s in zip(self.vertex_list,parts)}
+        else:
+            partition_table = {a:s for a,s in zip(self.vertex_list,parts)}
         return partition_table
 
 class NetworkSimulator:
@@ -395,6 +415,11 @@ class ShardSimulator(mp.Process):
                     local_graph = LocalGraph(blocks[max(0,len(blocks)-n_blocks):len(blocks)])
                     if self.compress is not None:
                         local_graph.compress(*self.compress)
+                        # set vertex weight that are not in this shard to 0
+                        for vertex_idx, vertex in enumertate(local_graph.vertex_list):
+                            vertex_shard = allocate.allocate(vertex)
+                            if vertex_shard != id:
+                                local_graph.vweights[vertex_idx] = 0
                     if id == 0:
                         # collects local graphs and construct global graph, partition it and broadcast account allocation table
                         local_graphs[id] = local_graph
