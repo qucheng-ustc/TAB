@@ -5,8 +5,6 @@
 
 using namespace std;
 
-static PyObject *MymetisError;
-
 int long_list_to_array(PyObject *list, idx_t* &arr){
     if (Py_IsNone(list)){
         arr = NULL;
@@ -145,13 +143,14 @@ mymetis_partition(PyObject *self, PyObject *args, PyObject *kwargs)
     }
     PyObject *result;
     result = Py_BuildValue("(iO)", objval_int, part_list);
-
+    Py_DECREF(part_list);
     if (xadj!=NULL) delete[] xadj;
     if (adjncy!=NULL) delete[] adjncy;
     if (vwgt!=NULL) delete[] vwgt;
     if (adjwgt!=NULL) delete[] adjwgt;
     if (tpwgts!=NULL) delete[] tpwgts;
     if (part!=NULL) delete[] part;
+
     return result;
 }
 
@@ -180,15 +179,6 @@ PyInit_mymetis(void)
     m = PyModule_Create(&mymetismodule);
     if (m == NULL)
         return NULL;
-
-    MymetisError = PyErr_NewException("mymetis.error", NULL, NULL);
-    Py_XINCREF(MymetisError);
-    if (PyModule_AddObject(m, "error", MymetisError) < 0) {
-        Py_XDECREF(MymetisError);
-        Py_CLEAR(MymetisError);
-        Py_DECREF(m);
-        return NULL;
-    }
 
     return m;
 }
