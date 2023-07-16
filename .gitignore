@@ -18,3 +18,4 @@ __pycache__
 *.txt
 *.txt.part.*
 /records/**/*.json
+*.sql
