@@ -4,6 +4,7 @@ from collections import deque
 from collections.abc import Iterable
 import multiprocessing as mp
 import os
+import json
 
 class Protocol:
     # stop simulation
@@ -280,7 +281,7 @@ class GlobalGraph:
             print('Edge weights:', len(weight_dict))
         return self
 
-    def partition(self, n, v_weight=True, match=False, debug=False):
+    def partition(self, n, v_weight=True, pmatch=False, weight_limit=0, debug=False):
         if self.n_vertex==0:
             return {}
         import mymetis
@@ -301,20 +302,37 @@ class GlobalGraph:
                 i += 1
             xadj.append(i)
         _, parts = mymetis.partition(xadj=xadj, adjncy=adjncy, vwgt=vwgt, adjwgt=adjwgt, nparts=n)
-        if match:
+        if pmatch:
             import munkres
             matrix = np.zeros(shape=(n,n), dtype=int)
+            orphan = 0
             for v in range(self.n_vertex):
                 part = parts[v]
-                old_part = self.old_partition[v]
-                matrix[part,old_part] += 1
+                if v in self.old_partition:
+                    old_part = self.old_partition[v]
+                    matrix[part,old_part] += 1
+                else:
+                    # orphan vertex, generated from outbound txs where relay txs are still in tx forward
+                    orphan += 1
+            # print("Total:", self.n_vertex, "Orphan:", orphan)
             cost_matrix = munkres.make_cost_matrix(matrix)
             m = munkres.Munkres()
             indexes = m.compute(cost_matrix)
             part_match = {}
             for row, column in indexes:
                 part_match[row] = column
+            # print(indexes)
             partition_table = {a:part_match[s] for a,s in zip(self.vertex_list,parts)}
+            # further reduce cost by reserve orphan vertexes and low weight vertexes
+            if weight_limit > 0:
+                for v, a in enumerate(self.vertex_list):
+                    if v not in self.old_partition:
+                        # always delete orphan vertex since we can not determine their shard
+                        del partition_table[a]
+                        orphan -= 1
+                    elif self.vertex_weights[v]<weight_limit:
+                        partition_table[a] = self.old_partition[v]
+                assert(orphan == 0) # check all orphan vertexes are deleted
         else:
             partition_table = {a:s for a,s in zip(self.vertex_list,parts)}
         return partition_table
@@ -366,15 +384,16 @@ class Overhead:
                 "state_transition":[],
                 "local_graph":[]
             }
+    
+    def save(self, path):
+        with open(path, "w") as f:
+            json.dump(self.costs, f)
 
-    def state_transition_cost(self, graph: GlobalGraph, new_table: dict):
+    def state_transition_cost(self, allocate, new_table: dict):
         cost = 0
-        old_parts = graph.old_partition
-        # assert(len(old_table)==len(new_table))
-        for vi, part in old_parts.items():
-            account = graph.vertex_list[vi]
-            new_part = new_table[account]
-            if new_part != part:
+        for a, new_part in new_table.items():
+            old_part = allocate.allocate(a)
+            if new_part != old_part:
                 cost += 1
         if self.record:
             self.costs['state_transition'].append(cost)
@@ -444,7 +463,7 @@ class NetworkSimulator:
         self.closed = True
 
 class ShardSimulator(mp.Process):
-    def __init__(self, idx: int, net: NetworkSimulator, allocate, tx_per_block, n_blocks, n_shards, shard_allocation, compress=None, match=False, overhead=None, save_path=None, *, daemon=True):
+    def __init__(self, idx: int, net: NetworkSimulator, allocate, tx_per_block, n_blocks, n_shards, shard_allocation, compress=None, pmatch=False, overhead:Overhead=None, save_path=None, *, daemon=True):
         super().__init__(daemon=daemon)
         self.idx = idx
         self.net = net
@@ -454,9 +473,13 @@ class ShardSimulator(mp.Process):
         self.n_shards = n_shards
         self.shard_allocation = shard_allocation
         self.compress = compress
-        self.match = match
+        self.pmatch = pmatch
         self.overhead = overhead
         self.save_path = save_path
+        self.weight_limit = 0
+        if self.compress is not None:
+            if len(self.compress)>2:
+                self.weight_limit = self.compress[2]
 
     def save_info(self, blocks, tx_pool, tx_forward):
         blocks_path = os.path.join(self.save_path,f'{self.idx}_blocks.txt')
@@ -475,8 +498,12 @@ class ShardSimulator(mp.Process):
             for tx_id, tx in enumerate(tx_forward):
                 # tx : from_addr, to_addr, timestamp, from_shard, to_shard, block_height
                 f.write(f'{tx_id}|{tx[0]}|{tx[1]}|{tx[2]}|{tx[3]}|{tx[4]}|{tx[5]}\n')
+        if self.overhead is not None:
+            overhead_path = os.path.join(self.save_path,f'{self.idx}_overhead.txt')
+            self.overhead.save(overhead_path)
 
     def run(self):
+        np.random.seed(0)
         idx = self.idx
         net = self.net
         allocate = self.allocate
@@ -523,7 +550,7 @@ class ShardSimulator(mp.Process):
                     # construct local graph and send to shard 0
                     local_graph = LocalGraph(blocks[max(0,len(blocks)-n_blocks):len(blocks)])
                     if self.compress is not None:
-                        local_graph.compress(*self.compress)
+                        local_graph.compress(self.compress[0], self.compress[1])
                         # set vertex weight that are not in this shard to 0
                         for vertex_idx, vertex in enumerate(local_graph.vertex_list):
                             vertex_shard = allocate.allocate(vertex)
@@ -543,9 +570,9 @@ class ShardSimulator(mp.Process):
                         if self.overhead is not None:
                             self.overhead.local_graph_cost(local_graphs.values())
                         global_graph = GlobalGraph(local_graphs=local_graphs.values())
-                        account_table = global_graph.partition(n_shards, match=self.match)
+                        account_table = global_graph.partition(n_shards, pmatch=self.pmatch, weight_limit=self.weight_limit)
                         if self.overhead is not None:
-                            self.overhead.state_transition_cost(global_graph, account_table)
+                            self.overhead.state_transition_cost(allocate=allocate, new_table=account_table)
                         local_graphs = {}
                         net.broadcast(idx, Protocol.MSG_TYPE_SHARD_ALLOCATION, account_table)
                 case Protocol.MSG_TYPE_QUERY_ACTION:
@@ -588,7 +615,7 @@ class ShardSimulator(mp.Process):
                     net.report(idx, Protocol.MSG_TYPE_CTRL_SEND_POOL, (tx_pool, tx_forward))
 
 class HarmonySimulator:
-    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True, compress=None, match=False, overhead=None, save_path=None):
+    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True, compress=None, pmatch=False, overhead=None, save_path=None):
         self.tx_per_block = tx_per_block
         self.block_interval = block_interval
         self.n_blocks = n_blocks
@@ -610,7 +637,7 @@ class HarmonySimulator:
 
         self.shard_allocation = shard_allocation
         self.compress = compress
-        self.match = match
+        self.pmatch = pmatch
         self.overhead = overhead
         self.save_path = save_path
 
@@ -639,10 +666,10 @@ class HarmonySimulator:
         self.network = NetworkSimulator(self.shard_ids)
         
         self.shards = [ShardSimulator(0, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
-                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, match=self.match, overhead=self.overhead, save_path=self.save_path)]
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=self.overhead, save_path=self.save_path)]
         self.shards.extend([
             ShardSimulator(idx, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
-                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, match=self.match, overhead=None, save_path=self.save_path)
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=None, save_path=self.save_path)
             for idx in self.shard_ids[1:]])
         for s in self.shards: s.start()
         self.is_closed = False
@@ -788,6 +815,10 @@ class HarmonySimulator:
                     # tx_id, from_addr, to_addr, timestamp, from_shard, to_shard, block_height
                     tx_id, from_addr, to_addr, timestamp, from_shard, to_shard, block_height = int(items[0]), items[1], items[2], float(items[3]), int(items[4]), int(items[5]), int(items[6])
                     tx_forward.append((from_addr, to_addr, timestamp, from_shard, to_shard, block_height))
+        if self.overhead is not None:
+            overhead_path = os.path.join(self.save_path,f'0_overhead.txt')
+            with open(overhead_path, 'r') as f:
+                self.overhead.costs = json.load(f)
 
     def info(self, start=0, end=None):
         if not self.is_closed:
@@ -864,9 +895,7 @@ class HarmonySimulator:
         result['wasted_mean'] = np.average(result['tx_wasted'])
         result['wasted_std'] = np.std(result['tx_wasted'])
         if self.overhead is not None:
-            self.network.query(0, Protocol.MSG_TYPE_QUERY_COST)
-            idx, msg_type, overhead = self.network.get_reply()
-            for cost_name, cost_value in overhead.costs.items():
+            for cost_name, cost_value in self.overhead.costs.items():
                 result[f'{cost_name}_cost'] = cost_value
                 if isinstance(cost_value, Iterable):
                     result[f'{cost_name}_total_cost'] = sum(cost_value)

@@ -16,6 +16,10 @@ class AccountAllocate:
     def allocate(self, addr):
         raise NotImplementedError
 
+class NoneAccountAllocate(AccountAllocate):
+    def allocate(self, addr):
+        return -1
+
 class StaticAccountAllocate(AccountAllocate):
     def __init__(self, n_shards):
         super().__init__(n_shards)
