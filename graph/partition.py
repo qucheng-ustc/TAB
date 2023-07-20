@@ -1,31 +1,19 @@
-import metis
-import subprocess
-import pathlib
-
 class Partition:
     def __init__(self, graph):
-        if isinstance(graph, str):
-            self.metis_graph = graph
-        else:
-            adjlist = [[]]*graph.n_vertex
-            for v in range(graph.n_vertex):
-                for v_next in graph.nexts.get(v,[]):
-                    v1, v2 = min(v,v_next),max(v,v_next)
-                    weight = graph.weights[(v1,v2)]
-                    adjlist[v].append((v_next,weight))
-            v_weights = graph.v_weights
-            self.metis_graph = metis.adjlist_to_metis(adjlist, nodew=v_weights)
+        self.graph = graph
 
     def partition(self, nparts, target_weights=None, allow_imbalance=None, debug=False):
-        if isinstance(self.metis_graph, str):
+        graph = self.graph
+        if isinstance(graph, str):
+            import subprocess
             if debug:
-                with open(self.metis_graph, 'r') as f:
+                with open(graph, 'r') as f:
                     print('Partition graph:', f.readline().strip())
-            options = ['gpmetis', self.metis_graph, str(nparts)]
+            options = ['gpmetis', graph, str(nparts)]
             if allow_imbalance is not None:
                 options.append(f'-ufactor={allow_imbalance}')
             if target_weights is not None:
-                tpwgts_path = f'{self.metis_graph}.tpwgts.{nparts}'
+                tpwgts_path = f'{graph}.tpwgts.{nparts}'
                 with open(tpwgts_path, 'w') as f:
                     for i in range(nparts):
                         f.write(f'{i}={target_weights[i]}\n')
@@ -36,10 +24,28 @@ class Partition:
             if debug:
                 print(cmd)
             ret = subprocess.call(cmd, shell=True)
-            output_path = f'{self.metis_graph}.part.{nparts}'
+            output_path = f'{graph}.part.{nparts}'
             with open(output_path, 'r') as f:
                 parts = [int(line) for line in f]
-        else:
-            edgecuts, parts = metis.part_graph(self.metis_graph, nparts=nparts)
+            return parts
+        # else use mymetis
+        if graph.n_vertex==0:
+            return {}
+        # convert graph into metis format
+        import mymetis
+        xadj = [0]
+        adjncy = []
+        adjwgt = []
+        if v_weight:
+            vwgt = []
+        i = 0
+        for v in range(graph.n_vertex):
+            if v_weight:
+                vwgt.append(self.vertex_weights[v])
+            for v_next, weight in self.edge_table[v].items():
+                adjncy.append(v_next)
+                adjwgt.append(weight)
+                i += 1
+            xadj.append(i)
+        _, parts = mymetis.partition(xadj=xadj, adjncy=adjncy, vwgt=vwgt, adjwgt=adjwgt, nparts=nparts)
         return parts
-

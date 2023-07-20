@@ -1,7 +1,9 @@
 import pandas as pd
 import numpy as np
 from collections import deque
+from collections.abc import Iterable
 import multiprocessing as mp
+import os
 
 class Protocol:
     # stop simulation
@@ -23,6 +25,9 @@ class Protocol:
     # query latest action
     MSG_TYPE_QUERY_ACTION = 0x07
     MSG_TYPE_QUERY_ACTION_REPLY = 0x14
+    # query cost
+    MSG_TYPE_QUERY_COST = 0x08
+    MSG_TYPE_QUERY_COST_REPLY = 0x15
     # send client txs
     MSG_TYPE_CLIENT_TX = 0x20
     # forward tx between shards
@@ -284,6 +289,8 @@ class GlobalGraph:
         adjwgt = []
         if v_weight:
             vwgt = []
+        else:
+            vwgt = None
         i = 0
         for v in range(self.n_vertex):
             if v_weight:
@@ -305,40 +312,119 @@ class GlobalGraph:
             m = munkres.Munkres()
             indexes = m.compute(cost_matrix)
             part_match = {}
-            for row, column in part_match:
+            for row, column in indexes:
                 part_match[row] = column
             partition_table = {a:part_match[s] for a,s in zip(self.vertex_list,parts)}
         else:
             partition_table = {a:s for a,s in zip(self.vertex_list,parts)}
         return partition_table
 
+# helper for calculating overhead
+class Overhead:
+    def __init__(self, addr_size=40, int_size=32, int32_size=4, int64_size=8, hash_size=32, sign_size=96, tx_size=None, block_header_size=None, record=True):
+        self.addr_size = addr_size
+        self.int_size = int_size # big int size
+        self.int32_size = int32_size
+        self.int64_size = int64_size
+        self.hash_size = hash_size
+        self.sign_size = sign_size
+        self.tx_size = tx_size
+        self.block_header_size = block_header_size
+        if self.tx_size is None:
+            # default tx:
+            #   nonce     int64  8    # account nonce
+            #   from      addr   40   # from address
+            #   to        addr   40   # to address
+            #   value     int    32   # transfer value
+            #   timestamp int64  8    # time
+            #   price     int    32   # fee price
+            #   signature sign   96   # signature
+            #   total            256 Bytes
+            self.tx_size = 2*self.int64_size + 2*self.int_size + 2*self.addr_size + self.sign_size
+        if self.block_header_size is None:
+            # default block header:
+            #   version          int32  4    # indicates block version & block type
+            #   timestamp        int64  8    # time
+            #   prev_hash        hash   32   # previous block hash
+            #   state_root       hash   32   # root of state tree
+            #   tx_root          hash   32   # root of transaction tree
+            #   outbound_tx_root hash   32   # root of outbound relay transactions
+            #   extend           hash   32   # used when block is prepare block, allocation block, state block
+            #   shard_id         int32  4    # shard id
+            #   cross_link       hash   32   # cross_link with beacon chain block
+            #   extra            hash   32   # additional inner shard consensus informations
+            #   signature        sign   96   # accumulated signature
+            #   total                   336 Bytes
+            self.block_header_size = 2*self.int32_size + self.int64_size + 7*self.hash_size + self.sign_size
+            # total size of a shard block is block_header_size + n*tx_size
+        self.record = record
+        self.reset()
+    
+    def reset(self):
+        if self.record:
+            self.costs = {
+                "state_transition":[],
+                "local_graph":[]
+            }
+
+    def state_transition_cost(self, graph: GlobalGraph, new_table: dict):
+        cost = 0
+        old_parts = graph.old_partition
+        # assert(len(old_table)==len(new_table))
+        for vi, part in old_parts.items():
+            account = graph.vertex_list[vi]
+            new_part = new_table[account]
+            if new_part != part:
+                cost += 1
+        if self.record:
+            self.costs['state_transition'].append(cost)
+        return cost
+    
+    def local_graph_size(self, local_graph):
+        size = 0
+        size += len(local_graph.vertex_list)*self.addr_size
+        size += len(local_graph.edge_splits)*self.int64_size
+        size += len(local_graph.edge_dests)*self.int64_size
+        size += len(local_graph.edge_weights)*self.int64_size
+        if hasattr(local_graph, "vweights"): # only in compress mode
+            size += len(local_graph.vweights)*self.int64_size
+        return size
+    
+    def local_graph_cost(self, local_graphs: list[LocalGraph]):
+        cost = 0
+        for g in local_graphs:
+            cost += self.local_graph_size(g)
+        if self.record:
+            self.costs['local_graph'].append(cost)
+        return cost
+
 class NetworkSimulator:
     # simple full connected network
     def __init__(self, nodes:list, delay:float=0.):
         self.n_nodes = len(nodes)
         self.nodes = nodes
-        self.queues = {id:mp.Queue() for id in nodes} # for msg exchange between nodes
+        self.queues = {idx:mp.Queue() for idx in nodes} # for msg exchange between nodes
         self.report_queue = mp.Queue() # for reporting shard info to main simulator
         self.closed = False
 
-    def send(self, id, to_id, msg_type, content):
-        self.queues[to_id].put((id, msg_type, content))
+    def send(self, idx, to_idx, msg_type, content):
+        self.queues[to_idx].put((idx, msg_type, content))
     
-    def broadcast(self, id, msg_type, content):
+    def broadcast(self, idx, msg_type, content):
         for queue in self.queues.values():
-            queue.put((id, msg_type, content))
+            queue.put((idx, msg_type, content))
 
-    def recv(self, id):
-        return self.queues[id].get()
+    def recv(self, idx):
+        return self.queues[idx].get()
     
     def ctrl(self, msg_type, content=None):
         self.broadcast(-1, msg_type=msg_type, content=content)
 
-    def report(self, id, msg_type, content):
-        self.report_queue.put((id, msg_type, content))
+    def report(self, idx, msg_type, content=None):
+        self.report_queue.put((idx, msg_type, content))
     
-    def query(self, id, msg_type, content=None):
-        self.send(-1, id, msg_type, content)
+    def query(self, idx, msg_type, content=None):
+        self.send(-1, idx, msg_type, content)
 
     def get_reply(self):
         return self.report_queue.get()
@@ -346,9 +432,9 @@ class NetworkSimulator:
     def join(self, msg_type):
         reply = dict()
         while len(reply)<len(self.queues):
-            id, report_type, content = self.get_reply()
+            idx, report_type, content = self.get_reply()
             if report_type == msg_type:
-                reply[id] = content
+                reply[idx] = content
         return reply
     
     def close(self):
@@ -358,9 +444,9 @@ class NetworkSimulator:
         self.closed = True
 
 class ShardSimulator(mp.Process):
-    def __init__(self, id: int, net: NetworkSimulator, allocate, tx_per_block, n_blocks, n_shards, shard_allocation, compress, *, daemon=True):
+    def __init__(self, idx: int, net: NetworkSimulator, allocate, tx_per_block, n_blocks, n_shards, shard_allocation, compress=None, match=False, overhead=None, save_path=None, *, daemon=True):
         super().__init__(daemon=daemon)
-        self.id = id
+        self.idx = idx
         self.net = net
         self.allocate = allocate
         self.tx_per_block = tx_per_block
@@ -368,9 +454,30 @@ class ShardSimulator(mp.Process):
         self.n_shards = n_shards
         self.shard_allocation = shard_allocation
         self.compress = compress
+        self.match = match
+        self.overhead = overhead
+        self.save_path = save_path
+
+    def save_info(self, blocks, tx_pool, tx_forward):
+        blocks_path = os.path.join(self.save_path,f'{self.idx}_blocks.txt')
+        with open(blocks_path, 'w') as f:
+            for block_id, block in enumerate(blocks):
+                for tx_id, tx in enumerate(block):
+                    # tx : from_addr, to_addr, timestamp, from_shard, to_shard, block_height
+                    f.write(f'{block_id}|{tx_id}|{tx[0]}|{tx[1]}|{tx[2]}|{tx[3]}|{tx[4]}|{tx[5]}\n')
+        tx_pool_path = os.path.join(self.save_path,f'{self.idx}_tx_pool.txt')
+        with open(tx_pool_path, 'w') as f:
+            for tx_id, tx in enumerate(tx_pool):
+                # tx = (from_addr, to_addr, timestamp, from_shard, to_shard)
+                f.write(f'{tx_id}|{tx[0]}|{tx[1]}|{tx[2]}|{tx[3]}|{tx[4]}\n')
+        tx_forward_path = os.path.join(self.save_path,f'{self.idx}_tx_forward.txt')
+        with open(tx_forward_path, 'w') as f:
+            for tx_id, tx in enumerate(tx_forward):
+                # tx : from_addr, to_addr, timestamp, from_shard, to_shard, block_height
+                f.write(f'{tx_id}|{tx[0]}|{tx[1]}|{tx[2]}|{tx[3]}|{tx[4]}|{tx[5]}\n')
 
     def run(self):
-        id = self.id
+        idx = self.idx
         net = self.net
         allocate = self.allocate
         tx_per_block = self.tx_per_block
@@ -380,15 +487,17 @@ class ShardSimulator(mp.Process):
         tx_pool = deque()
         tx_forward = deque()
         blocks = []
-        if id==0:
+        if idx==0:
             local_graphs = dict()
         while True:
-            from_id, msg_type, content = net.recv(id)
+            from_idx, msg_type, content = net.recv(idx)
             match msg_type:
                 case Protocol.MSG_TYPE_CTRL_RESET:
+                    self.save_info(blocks, tx_pool, tx_forward)
                     return
                 case Protocol.MSG_TYPE_CTRL_INFO:
-                    net.report(id, Protocol.MSG_TYPE_CTRL_REPORT, (blocks, tx_pool, tx_forward))
+                    self.save_info(blocks, tx_pool, tx_forward)
+                    net.report(idx, Protocol.MSG_TYPE_CTRL_REPORT)
                 case Protocol.MSG_TYPE_CTRL_BLOCK:
                     # each shard produce one block
                     block_height = len(blocks)
@@ -403,10 +512,10 @@ class ShardSimulator(mp.Process):
                         tx = (from_addr, to_addr, timestamp, from_shard, to_shard, block_height)
                         block_txs.append(tx)
                         # cross shard tx forward to target shard
-                        if to_shard!=id:
-                            net.send(id, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
+                        if to_shard!=idx:
+                            net.send(idx, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
                     blocks.append(block_txs)
-                    net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
+                    net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_SHARD_FORWARD_TX:
                     tx = content
                     tx_forward.append(tx)
@@ -416,30 +525,36 @@ class ShardSimulator(mp.Process):
                     if self.compress is not None:
                         local_graph.compress(*self.compress)
                         # set vertex weight that are not in this shard to 0
-                        for vertex_idx, vertex in enumertate(local_graph.vertex_list):
+                        for vertex_idx, vertex in enumerate(local_graph.vertex_list):
                             vertex_shard = allocate.allocate(vertex)
-                            if vertex_shard != id:
+                            if vertex_shard != idx:
                                 local_graph.vweights[vertex_idx] = 0
-                    if id == 0:
+                    if idx == 0:
                         # collects local graphs and construct global graph, partition it and broadcast account allocation table
-                        local_graphs[id] = local_graph
+                        local_graphs[idx] = local_graph
                     else:
-                        net.send(id, 0, Protocol.MSG_TYPE_SHARD_GRAPH, local_graph)
+                        net.send(idx, 0, Protocol.MSG_TYPE_SHARD_GRAPH, local_graph)
                 case Protocol.MSG_TYPE_CTRL_ALLOCATION: # use external allocation method
                     allocate.apply(content)
-                    net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
-                case Protocol.MSG_TYPE_SHARD_GRAPH if id == 0:
-                    local_graphs[from_id] = content
+                    net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
+                case Protocol.MSG_TYPE_SHARD_GRAPH if idx == 0:
+                    local_graphs[from_idx] = content
                     if len(local_graphs)>=n_shards:
+                        if self.overhead is not None:
+                            self.overhead.local_graph_cost(local_graphs.values())
                         global_graph = GlobalGraph(local_graphs=local_graphs.values())
-                        account_table = global_graph.partition(n_shards)
+                        account_table = global_graph.partition(n_shards, match=self.match)
+                        if self.overhead is not None:
+                            self.overhead.state_transition_cost(global_graph, account_table)
                         local_graphs = {}
-                        net.broadcast(id, Protocol.MSG_TYPE_SHARD_ALLOCATION, account_table)
+                        net.broadcast(idx, Protocol.MSG_TYPE_SHARD_ALLOCATION, account_table)
                 case Protocol.MSG_TYPE_QUERY_ACTION:
-                    net.report(id, Protocol.MSG_TYPE_QUERY_ACTION_REPLY, account_table) # report latest allocation action to client
+                    net.report(idx, Protocol.MSG_TYPE_QUERY_ACTION_REPLY, account_table) # report latest allocation action to client
+                case Protocol.MSG_TYPE_QUERY_COST:
+                    net.report(idx, Protocol.MSG_TYPE_QUERY_COST_REPLY, self.overhead)
                 case Protocol.MSG_TYPE_SHARD_ALLOCATION:
                     allocate.apply(content)
-                    net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
+                    net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_CTRL_TRANSITION:
                     # re-allocate tx pool
                     new_tx_pool = deque()
@@ -448,8 +563,8 @@ class ShardSimulator(mp.Process):
                         from_shard = allocate.allocate(from_addr)
                         to_shard = allocate.allocate(to_addr)
                         tx = (from_addr, to_addr, timestamp, from_shard, to_shard)
-                        if from_shard != id:
-                            net.send(id, from_shard, Protocol.MSG_TYPE_SHARD_TX, tx)
+                        if from_shard != idx:
+                            net.send(idx, from_shard, Protocol.MSG_TYPE_SHARD_TX, tx)
                         else:
                             new_tx_pool.append(tx)
                     tx_pool = new_tx_pool
@@ -457,23 +572,23 @@ class ShardSimulator(mp.Process):
                         from_shard = allocate.allocate(from_addr)
                         to_shard = allocate.allocate(to_addr)
                         tx = (from_addr, to_addr, timestamp, from_shard, to_shard, block_height)
-                        if to_shard != id:
-                            net.send(id, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
+                        if to_shard != idx:
+                            net.send(idx, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
                         else:
                             new_tx_forward.append(tx)
                     tx_forward = new_tx_forward
-                    net.report(id, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
+                    net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_SHARD_TX | Protocol.MSG_TYPE_CLIENT_TX:
                     tx = content
                     tx_pool.append(tx)
                 case Protocol.MSG_TYPE_CTRL_SYNC_BLOCK:
                     start = content
-                    net.report(id, Protocol.MSG_TYPE_CTRL_SEND_BLOCK, blocks[start:])
+                    net.report(idx, Protocol.MSG_TYPE_CTRL_SEND_BLOCK, blocks[start:])
                 case Protocol.MSG_TYPE_CTRL_SYNC_POOL:
-                    net.report(id, Protocol.MSG_TYPE_CTRL_SEND_POOL, (tx_pool, tx_forward))
+                    net.report(idx, Protocol.MSG_TYPE_CTRL_SEND_POOL, (tx_pool, tx_forward))
 
 class HarmonySimulator:
-    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True, compress=None):
+    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True, compress=None, match=False, overhead=None, save_path=None):
         self.tx_per_block = tx_per_block
         self.block_interval = block_interval
         self.n_blocks = n_blocks
@@ -495,12 +610,18 @@ class HarmonySimulator:
 
         self.shard_allocation = shard_allocation
         self.compress = compress
+        self.match = match
+        self.overhead = overhead
+        self.save_path = save_path
+
+        self.is_closed = True
     
     def close(self):
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_RESET)
         for s in self.shards: s.join()
         for s in self.shards: s.close()
         self.network.close()
+        self.is_closed = True
 
     def reset(self, ptx=0):
         self.allocate.reset()
@@ -516,12 +637,15 @@ class HarmonySimulator:
             self.close()
         self.shard_ids = list(range(self.n_shards))
         self.network = NetworkSimulator(self.shard_ids)
-
-        self.shards = [
-            ShardSimulator(id, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
-                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress)
-            for id in self.shard_ids]
+        
+        self.shards = [ShardSimulator(0, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, match=self.match, overhead=self.overhead, save_path=self.save_path)]
+        self.shards.extend([
+            ShardSimulator(idx, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, match=self.match, overhead=None, save_path=self.save_path)
+            for idx in self.shard_ids[1:]])
         for s in self.shards: s.start()
+        self.is_closed = False
         return self.client.done(time_interval=self.epoch_time)
 
     def block_height(self):
@@ -595,16 +719,18 @@ class HarmonySimulator:
         # 2. Transition: All shards apply the account allocation action and start state transition and forward pending txs in tx pool to destination shards, all shards produce state block after receive complete account states
         # 3. Block: All shards process transactions and produce blocks
 
+        # Note: all shards perform allocation algorithm in the paper so allocation table do not need to be broadcast. We only execute allocation algorithm in one shard here for fast simulation on single machine thus we broadcast the result table.
+
         # Allocation & Transition, client is shutdown during this period
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_ALLOCATION, action)
         self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
         if self.shard_allocation:
             self.network.query(0, Protocol.MSG_TYPE_QUERY_ACTION)
-            id, msg_type, action = self.network.get_reply()
+            idx, msg_type, action = self.network.get_reply()
         self.allocate.apply(action)
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_TRANSITION)
         self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
-        # self.simulate_time += self.block_interval # add time intervals
+        # self.simulate_time += self.block_interval # add idle time, do not need. Because in the paper, transaction processing are not shutdown during allocation phase which introduce no idle time.
 
         # start simulation
         for _ in range(self.n_blocks):
@@ -622,16 +748,53 @@ class HarmonySimulator:
             self.simulate_time += self.block_interval
             self.simulate_blocks += 1
         return self.client.done(time_interval=self.epoch_time)
+    
+    def load_info(self):
+        # read info from file
+        for shard in range(self.n_shards):
+            blocks = []
+            self.sblock[shard] = blocks
+            blocks_path = os.path.join(self.save_path,f'{shard}_blocks.txt')
+            with open(blocks_path, 'r') as f:
+                for line in f:
+                    items = line.split('|')
+                    # block_id, tx_id, from_addr, to_addr, timestamp, from_shard, to_shard, block_height
+                    block_id = int(items[0])
+                    tx_id = int(items[1])
+                    from_addr = items[2]
+                    to_addr = items[3]
+                    timestamp = float(items[4])
+                    from_shard = int(items[5])
+                    to_shard = int(items[6])
+                    block_height = int(items[7])
+                    while block_id>=len(blocks):
+                        blocks.append([])
+                    blocks[block_id].append((from_addr, to_addr, timestamp, from_shard, to_shard, block_height))
+            tx_pool = []
+            self.stx_pool[shard] = tx_pool
+            tx_pool_path = os.path.join(self.save_path,f'{shard}_tx_pool.txt')
+            with open(tx_pool_path, 'r') as f:
+                for line in f:
+                    items = line.split('|')
+                    # tx_id, from_addr, to_addr, timestamp, from_shard, to_shard
+                    tx_id, from_addr, to_addr, timestamp, from_shard, to_shard = int(items[0]), items[1], items[2], float(items[3]), int(items[4]), int(items[5])
+                    tx_pool.append((from_addr, to_addr, timestamp, from_shard, to_shard))
+            tx_forward = []
+            self.stx_forward[shard] = tx_forward
+            tx_forward_path = os.path.join(self.save_path,f'{shard}_tx_forward.txt')
+            with open(tx_forward_path, 'r') as f:
+                for line in f:
+                    items = line.split('|')
+                    # tx_id, from_addr, to_addr, timestamp, from_shard, to_shard, block_height
+                    tx_id, from_addr, to_addr, timestamp, from_shard, to_shard, block_height = int(items[0]), items[1], items[2], float(items[3]), int(items[4]), int(items[5]), int(items[6])
+                    tx_forward.append((from_addr, to_addr, timestamp, from_shard, to_shard, block_height))
 
     def info(self, start=0, end=None):
-        # re-sync shard blocks & tx pools
-        self.network.ctrl(Protocol.MSG_TYPE_CTRL_INFO)
-        results = self.network.join(Protocol.MSG_TYPE_CTRL_REPORT)
-        for shard, result in results.items():
-            blocks, tx_pool, tx_forward = result
-            self.sblock[shard] = blocks
-            self.stx_pool[shard] = tx_pool
-            self.stx_forward[shard] = tx_forward
+        if not self.is_closed:
+            # force shards save info
+            self.network.ctrl(Protocol.MSG_TYPE_CTRL_INFO)
+            self.network.join(Protocol.MSG_TYPE_CTRL_REPORT)
+        self.load_info()
         start, end = self._adjust_block_slice(start, end)
         n_tx = self.client.n_tx()
         n_block = 0
@@ -700,4 +863,11 @@ class HarmonySimulator:
         result['pending_length_std'] = np.std(result['tx_pending_length'])
         result['wasted_mean'] = np.average(result['tx_wasted'])
         result['wasted_std'] = np.std(result['tx_wasted'])
+        if self.overhead is not None:
+            self.network.query(0, Protocol.MSG_TYPE_QUERY_COST)
+            idx, msg_type, overhead = self.network.get_reply()
+            for cost_name, cost_value in overhead.costs.items():
+                result[f'{cost_name}_cost'] = cost_value
+                if isinstance(cost_value, Iterable):
+                    result[f'{cost_name}_total_cost'] = sum(cost_value)
         return result
