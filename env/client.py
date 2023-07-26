@@ -108,16 +108,17 @@ class PryClient(Client):
 class DoubleAddrClient(Client):
     def __init__(self, txs, tx_rate=1000):
         super().__init__(txs, tx_rate=tx_rate)
+        account_map = {} # record existing accounts
+        self.txs.apply(lambda tx:self.new_tx(tx, account_map),axis=1)
 
     def reset(self, ptx=0):
-        self.account_map = {} # record existing accounts
         return super().reset(ptx=ptx)
 
-    def new_tx(self, tx):
+    def new_tx(self, tx, account_map):
         addr_from = tx['from']
         addr_to = tx['to']
-        new_from = self.account_map.get(addr_from, None)
-        new_to = self.account_map.get(addr_to, None)
+        new_from = account_map.get(addr_from, None)
+        new_to = account_map.get(addr_to, None)
         # neither are new accounts
         if new_from and new_to:
             pass
@@ -125,24 +126,16 @@ class DoubleAddrClient(Client):
         elif not new_from and not new_to:
             new_from = (addr_from, addr_from)
             new_to = (addr_from, addr_to)
-            self.account_map[addr_from] = new_from
-            self.account_map[addr_to] = new_to
+            account_map[addr_from] = new_from
+            account_map[addr_to] = new_to
         # only addr_from is new
         elif new_to:
             new_from = (addr_to, addr_from)
-            self.account_map[addr_from] = new_from
+            account_map[addr_from] = new_from
         # only addr_to is new
         else:
             new_to = (addr_from, addr_to)
-            self.account_map[addr_to] = new_to
+            account_map[addr_to] = new_to
         tx['from'] = new_from
         tx['to'] = new_to
         return tx
-
-    def next(self, time_interval, peek=False):
-        txs = self.txs.iloc[self.ptx:min(self.ptx+self.tx_rate*time_interval, len(self.txs))]
-        if not peek:
-            self.ptx += len(txs)
-            return txs.apply(lambda tx:self.new_tx(tx),axis=1)
-        else:
-            return txs.apply(lambda tx:self.new_tx(tx.copy()),axis=1)

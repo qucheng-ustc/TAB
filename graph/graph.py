@@ -420,7 +420,7 @@ class ClusterGraph(Graph):
         self.raw = Graph(txs, debug=debug)
         self.cluster(n_cluster, debug=debug)
 
-    def cluster(self, n_cluster, debug=False):
+    def cluster(self, n_cluster, topn_v, debug=False):
         # sort v_weights in descending order
         sort_v_weights = pd.Series(self.raw.v_weights).sort_values(ascending=False)
         sort_v = sort_v_weights.index

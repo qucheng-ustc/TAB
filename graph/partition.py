@@ -36,13 +36,14 @@ class Partition:
         xadj = [0]
         adjncy = []
         adjwgt = []
-        if v_weight:
+        if graph.v_weight:
             vwgt = []
         i = 0
         for v in range(graph.n_vertex):
-            if v_weight:
-                vwgt.append(self.vertex_weights[v])
-            for v_next, weight in self.edge_table[v].items():
+            if graph.v_weight:
+                vwgt.append(graph.v_weights[v])
+            for v_next in graph.nexts[v]:
+                weight = graph.weights[(min(v,v_next),max(v,v_next))]
                 adjncy.append(v_next)
                 adjwgt.append(weight)
                 i += 1

@@ -96,8 +96,14 @@ class DoubleAccountAllocate(AccountAllocate):
         # base: allocate strategy to allocate the combined addr (addr[0], addr[1])
         # fallback: allocate strategy to allocate the single addr addr[0]
         super().__init__(n_shards)
-        self.base = base
-        self.fallback = fallback
+        if base is None:
+            self.base = NoneAccountAllocate(n_shards=n_shards)
+        else:
+            self.base = base
+        if fallback is None:
+            self.fallback = NoneAccountAllocate(n_shards=n_shards)
+        else:
+            self.fallback = fallback
     
     def reset(self):
         self.base.reset()

@@ -3,7 +3,7 @@ from tqdm import tqdm
 from arrl.dataloader import get_default_dataloader
 from arrl.preprocess import drop_contract_creation_tx
 from graph.graph import Graph
-from strategy.account import StaticAccountAllocate, TableDoubleAccountAllocate, TableAccountAllocate, DoubleAccountAllocate, NoneAccountAllocate
+from strategy.account import StaticAccountAllocate, TableDoubleAccountAllocate, TableAccountAllocate
 from env.harmony import HarmonySimulator, Overhead
 from env.client import DoubleAddrClient, Client
 import exp
@@ -14,7 +14,6 @@ np.random.seed(0)
 log = exp.log.get_logger('test_harmony', file_name='logs/test_harmony.log')
 
 def test_harmony(txs, method='last', args=None):
-    txs = txs[['from','to']]
     n_shards = args.n_shards
     n_blocks = args.n_blocks
     tx_rate = args.tx_rate
@@ -22,6 +21,7 @@ def test_harmony(txs, method='last', args=None):
     block_interval = args.block_interval
     static_allocator = StaticAccountAllocate(n_shards=n_shards)
 
+    overhead = None
     if args.overhead:
         overhead = Overhead()
     
@@ -36,7 +36,7 @@ def test_harmony(txs, method='last', args=None):
     def get_allocator(method='table'):
         if method == 'none':
             if args.double_addr is True:
-                return DoubleAccountAllocate(n_shards=n_shards, base=NoneAccountAllocate(n_shards), fallback=static_allocator)
+                raise NotImplementedError
             else:
                 return static_allocator
         if args.double_addr is True:
@@ -104,8 +104,8 @@ def test_harmony(txs, method='last', args=None):
             if done: break
 
     simulator.close()
-    info = simulator.info()
-    log.print(simulator.info())
+    info = simulator.info(n_blocks)
+    log.print(info)
     return info
 
 if __name__=='__main__':
@@ -113,7 +113,7 @@ if __name__=='__main__':
     parser.add_argument('--method', type=str, choices=['none', 'all', 'last', 'shard', 'pending'], default='shard')
     parser.add_argument('--double_addr', action="store_true")
     parser.add_argument('--compress', nargs="*", type=int, default=None)
-    parser.add_argument('--pmatch', action="store_true")                                                                                                                                                                   
+    parser.add_argument('--pmatch', action="store_true")
     parser.add_argument('--overhead', action="store_true")
     parser.add_argument('--save_path', type=str, default='/tmp/harmony')
     args = parser.parse_args()
@@ -125,7 +125,9 @@ if __name__=='__main__':
 
     loader = get_default_dataloader()
     _, txs = loader.load_data(start_time=args.start_time, end_time=args.end_time)
+    loader.close()
     drop_contract_creation_tx(txs)
+    txs = txs[['from','to']]
 
     info = test_harmony(txs, method=args.method, args=args)
     recorder.add("info", info)

@@ -9,6 +9,9 @@ class DataLoader:
         self.cursor.execute("select version()")
         data = self.cursor.fetchone()
         print("Database Version: %s"%data)
+    
+    def close(self):
+        self.db.close()
 
     def load_data(self, start_time=None, end_time=None):
         # start_time : timestamp or time str with format "%Y-%m-%d %H:%M:%S"

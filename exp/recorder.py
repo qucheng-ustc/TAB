@@ -41,6 +41,8 @@ class Recorder:
     def __init__(self, path, params, name=None):
         if name is None:
             name = auto_name(params)
+        if not os.path.exists(path):
+            os.makedirs(path, exist_ok=True)
         self.path = path
         self.name = name
         self.params = params
