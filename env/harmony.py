@@ -6,6 +6,7 @@ import multiprocessing as mp
 import os
 import json
 import math
+import gc
 
 class Protocol:
     # stop simulation
@@ -629,6 +630,8 @@ class ShardSimulator(mp.Process):
                         self.overhead.allocation_table_cost(allocate)
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_CTRL_TRANSITION:
+                    # gc before transition
+                    gc.collect()
                     # re-allocate tx pool
                     new_tx_pool = deque()
                     new_tx_forward = deque()
@@ -886,7 +889,7 @@ class HarmonySimulator:
         tx_wasted = [0 for _ in range(self.n_shards)]
         tx_delay = []
         start_time = start*self.block_interval
-        end_time = end*self.block_interval
+        end_time = end*self.block_interval2
         total_time = end_time - start_time
         for shard, blocks in enumerate(self.sblock):
             shard_blocks = blocks[start:end]
