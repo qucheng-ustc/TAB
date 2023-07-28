@@ -6,6 +6,7 @@ import multiprocessing as mp
 import os
 import json
 import math
+import time
 import gc
 
 class Protocol:
@@ -395,13 +396,25 @@ class Overhead:
                 "state_transition":[],
                 "local_graph":[],
                 "state_size":[],
-                "allocation_table":[]
+                "allocation_table":[],
+                "partition_time":[],
             }
     
     def save(self, path):
         with open(path, "w") as f:
             json.dump(self.costs, f)
+
+    def partition_begin(self):
+        self.start_time = time.perf_counter()
+        return self.start_time
     
+    def partition_end(self):
+        self.end_time = time.perf_counter()
+        elapsed_time = self.end_time-self.start_time
+        if self.record:
+            self.costs['partition_time'].append(elapsed_time)
+        return elapsed_time
+
     def allocation_table_cost(self, allocate):
         account_table = None
         if hasattr(allocate, 'account_table'):
@@ -613,9 +626,11 @@ class ShardSimulator(mp.Process):
                     if len(local_graphs)>=n_shards:
                         if self.overhead is not None:
                             self.overhead.local_graph_cost(local_graphs.values())
+                            self.overhead.partition_begin()
                         global_graph = GlobalGraph(local_graphs=local_graphs.values())
                         account_table = global_graph.partition(n_shards, pmatch=self.pmatch, weight_limit=self.weight_limit)
                         if self.overhead is not None:
+                            self.overhead.partition_end()
                             n_trans = self.overhead.state_transition_cost(allocate=allocate, new_table=account_table)
                             self.overhead.state_size_cost(n_shards=n_shards, n_trans=n_trans)
                         local_graphs = {}
@@ -889,7 +904,7 @@ class HarmonySimulator:
         tx_wasted = [0 for _ in range(self.n_shards)]
         tx_delay = []
         start_time = start*self.block_interval
-        end_time = end*self.block_interval2
+        end_time = end*self.block_interval
         total_time = end_time - start_time
         for shard, blocks in enumerate(self.sblock):
             shard_blocks = blocks[start:end]

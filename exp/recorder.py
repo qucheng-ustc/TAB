@@ -48,9 +48,9 @@ class Recorder:
         self.params = params
 
         self.record = dict(
-            name=self.name,
+            name=name,
             time=current_timestr(),
-            params=self.params,
+            params=params,
             values=dict()
         )
     
@@ -62,3 +62,11 @@ class Recorder:
         print("Save record to:", filepath)
         with open(filepath, "w") as f:
             json.dump(self.record, f, indent=1)
+    
+    @classmethod
+    def load(cls, path):
+        with open(path, 'r') as f:
+            record = json.load(f)
+        recorder = cls(os.path.dirname(path), record["params"], record["name"])
+        recorder.record = record
+        return recorder
