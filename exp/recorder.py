@@ -46,13 +46,17 @@ class Recorder:
         self.path = path
         self.name = name
         self.params = params
+        self.time = current_timestr()
 
         self.record = dict(
-            name=name,
+            name=self.name,
             time=current_timestr(),
-            params=params,
+            params=self.params,
             values=dict()
         )
+    
+    def get(self, key):
+        return self.record["values"][key]
     
     def add(self, key, value):
         self.record["values"][key]=value

@@ -400,9 +400,10 @@ class Overhead:
                 "partition_time":[],
             }
     
-    def save(self, path):
+    def save(self, path, skip=1):
+        costs = {k:v[skip:] for k,v in self.costs.items()}
         with open(path, "w") as f:
-            json.dump(self.costs, f)
+            json.dump(costs, f)
 
     def partition_begin(self):
         self.start_time = time.perf_counter()
