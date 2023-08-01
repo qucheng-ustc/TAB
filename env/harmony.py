@@ -822,14 +822,29 @@ class HarmonySimulator:
             self.simulate_time += self.block_interval
             self.block_height += 1
         return self.client.done(time_interval=self.epoch_time)
-    
-    def load_info(self):
-        # read info from file
-        self.sblock = [[] for _ in range(self.n_shards)]
+
+    def info(self, start=0, end=None):
+        if not self.is_closed:
+            # force shards save info
+            self.network.ctrl(Protocol.MSG_TYPE_CTRL_INFO)
+            self.network.join(Protocol.MSG_TYPE_CTRL_REPORT)
+        start, end = self._adjust_block_slice(start, end)
+        n_tx = self.client.n_tx()
+        n_block = 0
+        n_block_tx = 0
+        n_block_out_tx = 0
+        n_block_forward_tx = 0
+        n_block_inner_tx = 0
+        tx_wasted = [0 for _ in range(self.n_shards)]
+        tx_delay = []
+        start_time = start*self.block_interval
+        end_time = end*self.block_interval
+        total_time = end_time - start_time
+        tx_pool_length = []
+        tx_forward_length = []
         for shard in range(self.n_shards):
-            blocks = []
-            self.sblock[shard] = blocks
             blocks_path = os.path.join(self.save_path,f'{shard}_blocks.txt')
+            blocks = []
             with open(blocks_path, 'r') as f:
                 for line in f:
                     items = line.split('|')
@@ -845,48 +860,6 @@ class HarmonySimulator:
                     while block_id>=len(blocks):
                         blocks.append([])
                     blocks[block_id].append((from_addr, to_addr, timestamp, from_shard, to_shard, block_height))
-            tx_pool = []
-            self.stx_pool[shard] = tx_pool
-            tx_pool_path = os.path.join(self.save_path,f'{shard}_tx_pool.txt')
-            with open(tx_pool_path, 'r') as f:
-                for line in f:
-                    items = line.split('|')
-                    # tx_id, from_addr, to_addr, timestamp, from_shard, to_shard
-                    tx_id, from_addr, to_addr, timestamp, from_shard, to_shard = int(items[0]), items[1], items[2], float(items[3]), int(items[4]), int(items[5])
-                    tx_pool.append((from_addr, to_addr, timestamp, from_shard, to_shard))
-            tx_forward = []
-            self.stx_forward[shard] = tx_forward
-            tx_forward_path = os.path.join(self.save_path,f'{shard}_tx_forward.txt')
-            with open(tx_forward_path, 'r') as f:
-                for line in f:
-                    items = line.split('|')
-                    # tx_id, from_addr, to_addr, timestamp, from_shard, to_shard, block_height
-                    tx_id, from_addr, to_addr, timestamp, from_shard, to_shard, block_height = int(items[0]), items[1], items[2], float(items[3]), int(items[4]), int(items[5]), int(items[6])
-                    tx_forward.append((from_addr, to_addr, timestamp, from_shard, to_shard, block_height))
-        if self.overhead is not None:
-            overhead_path = os.path.join(self.save_path,f'0_overhead.txt')
-            with open(overhead_path, 'r') as f:
-                self.overhead.costs = json.load(f)
-
-    def info(self, start=0, end=None):
-        if not self.is_closed:
-            # force shards save info
-            self.network.ctrl(Protocol.MSG_TYPE_CTRL_INFO)
-            self.network.join(Protocol.MSG_TYPE_CTRL_REPORT)
-        self.load_info()
-        start, end = self._adjust_block_slice(start, end)
-        n_tx = self.client.n_tx()
-        n_block = 0
-        n_block_tx = 0
-        n_block_out_tx = 0
-        n_block_forward_tx = 0
-        n_block_inner_tx = 0
-        tx_wasted = [0 for _ in range(self.n_shards)]
-        tx_delay = []
-        start_time = start*self.block_interval
-        end_time = end*self.block_interval
-        total_time = end_time - start_time
-        for shard, blocks in enumerate(self.sblock):
             shard_blocks = blocks[start:end]
             n_block += len(shard_blocks)
             block_time = start_time
@@ -903,8 +876,14 @@ class HarmonySimulator:
                         n_block_forward_tx += 1
                         tx_delay.append(block_time-timestamp)
                 tx_wasted[shard] += self.tx_per_block - len(block)
+            tx_pool_path = os.path.join(self.save_path,f'{shard}_tx_pool.txt')
+            with open(tx_pool_path, 'r') as f:
+                tx_pool_length.append(sum(1 for line in f))
+            tx_forward_path = os.path.join(self.save_path,f'{shard}_tx_forward.txt')
+            with open(tx_forward_path, 'r') as f:
+                tx_forward_length.append(sum(1 for line in f))
         n_wasted = sum(tx_wasted)
-
+        
         result = dict(
             n_shards = self.n_shards,
             blocks_per_epoch = self.n_blocks,
@@ -924,8 +903,8 @@ class HarmonySimulator:
             throughput = n_block_tx/total_time if total_time>0 else 0,
             actual_throughput = (n_block_inner_tx+n_block_forward_tx)/total_time if total_time>0 else 0,
             target_throughput = self.tx_per_block*self.n_shards/self.block_interval,
-            tx_pool_length = [len(pool) for pool in self.stx_pool],
-            tx_forward_length = [len(forward) for forward in self.stx_forward],
+            tx_pool_length = tx_pool_length,
+            tx_forward_length = tx_forward_length,
             n_wasted = n_wasted,
             tx_wasted = tx_wasted,
             prop_wasted = float(n_wasted) / (n_block * self.tx_per_block),
@@ -943,6 +922,9 @@ class HarmonySimulator:
         result['wasted_mean'] = np.average(result['tx_wasted'])
         result['wasted_std'] = np.std(result['tx_wasted'])
         if self.overhead is not None:
+            overhead_path = os.path.join(self.save_path,f'0_overhead.txt')
+            with open(overhead_path, 'r') as f:
+                self.overhead.costs = json.load(f)
             for cost_name, cost_value in self.overhead.costs.items():
                 result[f'{cost_name}_cost'] = cost_value
                 if isinstance(cost_value, Iterable):
