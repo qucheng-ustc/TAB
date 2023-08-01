@@ -53,33 +53,6 @@ def test_harmony(txs, method='last', args=None):
         for _ in tqdm(range(simulator.max_epochs)):
             simulator.step(None)
 
-    if 'all' == method:
-        log.print('Table updated by all txs partition:')
-        client = get_client()
-        simulator_args['client'] = get_client()
-        table_allocator = get_allocator()
-        simulator_args['allocate'] = table_allocator
-        simulator = HarmonySimulator(**simulator_args)
-        graph = Graph(txs=client.next(simulator.max_epochs*simulator.epoch_time, peek=True), debug=True).save('./metis/graphs/test_harmony_all.txt')
-        account_table = graph.partition(n_shards, debug=True)
-        table_allocator.set_account_table(account_table)
-        simulator.reset()
-        for _ in tqdm(range(simulator.max_epochs)):
-            simulator.step(None)
-    
-    if 'last' == method:
-        log.print('Table updated by last step partition:')
-        simulator_args['client'] = get_client()
-        simulator_args['allocate'] = get_allocator()
-        simulator = HarmonySimulator(**simulator_args)
-        simulator.reset()
-        account_table = {}
-        for _ in tqdm(range(simulator.max_epochs)):
-            done = simulator.step(account_table)
-            if done: break
-            graph = Graph(simulator.get_block_txs(-simulator.n_blocks)).save('./metis/graphs/test_harmony_last.txt')
-            account_table = graph.partition(n_shards)
-
     if 'pending' == method:
         log.print('Table updated by pending txs partition:')
         simulator_args['client'] = get_client()
@@ -124,10 +97,7 @@ if __name__=='__main__':
     recorder = exp.recorder.Recorder('records/test_harmony', params=vars(args))
 
     loader = get_default_dataloader()
-    _, txs = loader.load_data(start_time=args.start_time, end_time=args.end_time)
-    loader.close()
-    drop_contract_creation_tx(txs)
-    txs = txs[['from','to']]
+    txs = loader.load_data(start_time=args.start_time, end_time=args.end_time, columns=['from','to'], dropna=True)
 
     info = test_harmony(txs, method=args.method, args=args)
     recorder.add("info", info)

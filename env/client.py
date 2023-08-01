@@ -4,22 +4,6 @@ class Client:
     def __init__(self, txs, tx_rate=1000):
         self.tx_rate = tx_rate
         self.txs = txs
-        if "from_addr" in txs.columns:
-            self.from_col = "from_addr"
-        elif "from" in txs.columns:
-            self.from_col = "from"
-        else:
-            raise ValueError(txs.columns)
-        if "to_addr" in txs.columns:
-            self.to_col = "to_addr"
-        elif "to" in txs.columns:
-            self.to_col = "to"
-        else:
-            raise ValueError(txs.columns)
-        cols = ['from', 'to']
-        if "gas" in txs.columns: # an optional gas column
-            cols.append('gas')
-        self.txs = self.txs.rename(columns={self.from_col:'from', self.to_col:'to'})[cols]
         self.reset()
     
     def reset(self, ptx=0):
@@ -33,14 +17,9 @@ class Client:
     def done(self, time_interval=0):
         return self.ptx+self.tx_rate*time_interval>=len(self.txs)
     
-    def next(self, time_interval, peek=False):
-        txs = self.txs.iloc[self.ptx:min(self.ptx+self.tx_rate*time_interval, len(self.txs))]
-        if not peek:
-            self.ptx += len(txs)
-        return txs
-    
-    def past(self, time_interval):
-        txs = self.txs.iloc[self.ptx-self.tx_rate*time_interval:self.ptx]
+    def next(self, time_interval):
+        txs = self.txs.next(self.tx_rate*time_interval)
+        self.ptx += len(txs)
         return txs
 
 class PryClient(Client):
@@ -108,15 +87,13 @@ class PryClient(Client):
 class DoubleAddrClient(Client):
     def __init__(self, txs, tx_rate=1000):
         super().__init__(txs, tx_rate=tx_rate)
-        account_map = {} # record existing accounts
-        self.txs.apply(lambda tx:self.new_tx(tx, account_map),axis=1)
+        self.account_map = {} # record existing accounts
 
     def reset(self, ptx=0):
         return super().reset(ptx=ptx)
 
-    def new_tx(self, tx, account_map):
-        addr_from = tx['from']
-        addr_to = tx['to']
+    def new_tx(self, addr_from, addr_to):
+        account_map = self.account_map
         new_from = account_map.get(addr_from, None)
         new_to = account_map.get(addr_to, None)
         # neither are new accounts
@@ -136,6 +113,13 @@ class DoubleAddrClient(Client):
         else:
             new_to = (addr_from, addr_to)
             account_map[addr_to] = new_to
-        tx['from'] = new_from
-        tx['to'] = new_to
-        return tx
+        return new_from, new_to
+    
+    def next(self, time_interval):
+        txs = self.txs.next(self.tx_rate*time_interval)
+        new_txs = []
+        for addr_from, addr_to, *_ in txs:
+            new_from, new_to = self.new_tx(addr_from, addr_to)
+            new_txs.append((new_from,new_to))
+        self.ptx += len(txs)
+        return new_txs

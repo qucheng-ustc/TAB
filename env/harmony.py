@@ -20,9 +20,6 @@ class Protocol:
     # get info
     MSG_TYPE_CTRL_INFO = 0x04
     MSG_TYPE_CTRL_REPORT = 0x11
-    # sync blocks
-    MSG_TYPE_CTRL_SYNC_BLOCK = 0x05
-    MSG_TYPE_CTRL_SEND_BLOCK = 0x12
     # sync tx pools
     MSG_TYPE_CTRL_SYNC_POOL = 0x06
     MSG_TYPE_CTRL_SEND_POOL = 0x13
@@ -43,43 +40,50 @@ class Protocol:
     MSG_TYPE_SHARD_ALLOCATION = 0x33
 
 class LocalGraph:
-    def __init__(self, blocks):
-        vertex_list = []
-        vertex_dict = {}
-        edge_table = []
-        n_vertex = 0
-        n_edge = 0
+    def __init__(self, blocks=[]):
+        self.vertex_dict = {}
+        self.vertex_list = []
+        self.edge_table = []
+        self.n_edge = 0
         for block in blocks:
-            for from_addr, to_addr, *_ in block:
-                if from_addr not in vertex_dict:
-                    vertex_dict[from_addr] = len(vertex_list)
-                    vertex_list.append(from_addr)
-                    edge_table.append({})
-                    n_vertex += 1
-                if to_addr not in vertex_dict:
-                    vertex_dict[to_addr] = len(vertex_list)
-                    vertex_list.append(to_addr)
-                    edge_table.append({})
-                    n_vertex += 1
-                from_idx, to_idx = vertex_dict[from_addr], vertex_dict[to_addr]
-                idx_min, idx_max = min(from_idx, to_idx), max(from_idx, to_idx)
-                edge_dict = edge_table[idx_min]
-                if idx_max not in edge_dict:
-                    edge_dict[idx_max] = 1
-                    n_edge += 1
-                else:
-                    edge_dict[idx_max] += 1
-        self.vertex_list = vertex_list
-        self.edge_weights = np.zeros(shape=n_edge, dtype=np.int)
-        self.edge_dests = np.zeros(shape=n_edge, dtype=np.int)
+            self.append(block)
+    
+    def append(self, block):
+        vertex_dict = self.vertex_dict
+        vertex_list = self.vertex_list
+        edge_table = self.edge_table
+        for from_addr, to_addr, *_ in block:
+            if from_addr not in vertex_dict:
+                vertex_dict[from_addr] = len(vertex_list)
+                vertex_list.append(from_addr)
+                edge_table.append({})
+            if to_addr not in vertex_dict:
+                vertex_dict[to_addr] = len(vertex_list)
+                vertex_list.append(to_addr)
+                edge_table.append({})
+            from_idx, to_idx = vertex_dict[from_addr], vertex_dict[to_addr]
+            idx_min, idx_max = min(from_idx, to_idx), max(from_idx, to_idx)
+            edge_dict = edge_table[idx_min]
+            if idx_max not in edge_dict:
+                edge_dict[idx_max] = 1
+                self.n_edge += 1
+            else:
+                edge_dict[idx_max] += 1
+    
+    def prepare(self): # prepare to send to other shard
+        self.edge_weights = np.zeros(shape=self.n_edge, dtype=np.int)
+        self.edge_dests = np.zeros(shape=self.n_edge, dtype=np.int)
         self.edge_splits = []
         i = 0
-        for edge_dict in edge_table:
+        for edge_dict in self.edge_table:
             for edge_dest, edge_weight in edge_dict.items():
                 self.edge_weights[i] = edge_weight
                 self.edge_dests[i] = edge_dest
                 i += 1
             self.edge_splits.append(i)
+        del self.edge_table
+        del self.n_edge
+        del self.vertex_dict
     
     def save(self, path='./metis/graphs/local_graph.txt', debug=False):
         self.save_path = path
@@ -535,14 +539,19 @@ class ShardSimulator(mp.Process):
         if self.compress is not None:
             if len(self.compress)>2:
                 self.weight_limit = self.compress[2]
+        
+        self.blocks_path = os.path.join(self.save_path,f'{self.idx}_blocks.txt')
+        with open(self.blocks_path, 'w') as file:
+            file.truncate(0)
+        self.block_height = 0
+    
+    def save_block(self, block):
+        with open(self.blocks_path, 'a') as f:
+            for tx_id, tx in enumerate(block):
+                # tx : from_addr, to_addr, timestamp, from_shard, to_shard, block_height
+                f.write(f'{self.block_height}|{tx_id}|{tx[0]}|{tx[1]}|{tx[2]}|{tx[3]}|{tx[4]}|{tx[5]}\n')
 
-    def save_info(self, blocks, tx_pool, tx_forward):
-        blocks_path = os.path.join(self.save_path,f'{self.idx}_blocks.txt')
-        with open(blocks_path, 'w') as f:
-            for block_id, block in enumerate(blocks):
-                for tx_id, tx in enumerate(block):
-                    # tx : from_addr, to_addr, timestamp, from_shard, to_shard, block_height
-                    f.write(f'{block_id}|{tx_id}|{tx[0]}|{tx[1]}|{tx[2]}|{tx[3]}|{tx[4]}|{tx[5]}\n')
+    def save_info(self, tx_pool, tx_forward):
         tx_pool_path = os.path.join(self.save_path,f'{self.idx}_tx_pool.txt')
         with open(tx_pool_path, 'w') as f:
             for tx_id, tx in enumerate(tx_pool):
@@ -563,27 +572,27 @@ class ShardSimulator(mp.Process):
         net = self.net
         allocate = self.allocate
         tx_per_block = self.tx_per_block
-        n_blocks = self.n_blocks
         n_shards = self.n_shards
         shard_allocation = self.shard_allocation
         tx_pool = deque()
         tx_forward = deque()
-        blocks = []
+        # blocks = []
+        local_graph = LocalGraph()
         if idx==0:
             local_graphs = dict()
         while True:
             from_idx, msg_type, content = net.recv(idx)
             match msg_type:
                 case Protocol.MSG_TYPE_CTRL_RESET:
-                    self.save_info(blocks, tx_pool, tx_forward)
+                    self.save_info(tx_pool, tx_forward)
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPORT)
                     return
                 case Protocol.MSG_TYPE_CTRL_INFO:
-                    self.save_info(blocks, tx_pool, tx_forward)
+                    self.save_info(tx_pool, tx_forward)
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPORT)
                 case Protocol.MSG_TYPE_CTRL_BLOCK:
                     # each shard produce one block
-                    block_height = len(blocks)
+                    block_height = self.block_height
                     block_txs = []
                     while len(block_txs)<tx_per_block and len(tx_forward)>0:
                         if tx_forward[0][5]>=block_height:
@@ -597,14 +606,18 @@ class ShardSimulator(mp.Process):
                         # cross shard tx forward to target shard
                         if to_shard!=idx:
                             net.send(idx, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
-                    blocks.append(block_txs)
+                    local_graph.append(block_txs)
+                    self.save_block(block_txs)
+                    # delete block_txs after save it to file
+                    del block_txs
+                    self.block_height += 1
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_SHARD_FORWARD_TX:
                     tx = content
                     tx_forward.append(tx)
                 case Protocol.MSG_TYPE_CTRL_ALLOCATION if shard_allocation:
                     # construct local graph and send to shard 0
-                    local_graph = LocalGraph(blocks[max(0,len(blocks)-n_blocks):len(blocks)])
+                    local_graph.prepare()
                     if self.compress is not None:
                         local_graph.compress(self.compress[0], self.compress[1])
                         # set vertex weight that are not in this shard to 0
@@ -641,6 +654,7 @@ class ShardSimulator(mp.Process):
                 case Protocol.MSG_TYPE_QUERY_COST:
                     net.report(idx, Protocol.MSG_TYPE_QUERY_COST_REPLY, self.overhead)
                 case Protocol.MSG_TYPE_SHARD_ALLOCATION:
+                    local_graph = LocalGraph() # reset local graph
                     allocate.apply(content)
                     if idx == 0 and self.overhead is not None:
                         self.overhead.allocation_table_cost(allocate)
@@ -673,9 +687,6 @@ class ShardSimulator(mp.Process):
                 case Protocol.MSG_TYPE_SHARD_TX | Protocol.MSG_TYPE_CLIENT_TX:
                     tx = content
                     tx_pool.append(tx)
-                case Protocol.MSG_TYPE_CTRL_SYNC_BLOCK:
-                    start = content
-                    net.report(idx, Protocol.MSG_TYPE_CTRL_SEND_BLOCK, blocks[start:])
                 case Protocol.MSG_TYPE_CTRL_SYNC_POOL:
                     net.report(idx, Protocol.MSG_TYPE_CTRL_SEND_POOL, (tx_pool, tx_forward))
 
@@ -722,11 +733,10 @@ class HarmonySimulator:
         self.allocate.reset()
         self.client.reset(ptx=ptx)
         self.simulate_time = 0
-        self.simulate_blocks = 0
+        self.block_height = 0
 
         self.stx_pool = [deque() for _ in range(self.n_shards)]
         self.stx_forward = [deque() for _ in range(self.n_shards)]
-        self.sblock = [[] for _ in range(self.n_shards)]
 
         if self.network is not None and not self.network.closed:
             self.close()
@@ -743,12 +753,9 @@ class HarmonySimulator:
         for s in self.shards: s.start()
         self.is_closed = False
         return self.client.done(time_interval=self.epoch_time)
-
-    def block_height(self):
-        return max([len(blocks) for blocks in self.sblock])
     
     def _adjust_block_slice(self, start, end):
-        block_height = self.block_height()
+        block_height = self.block_height
         if start<0:
             start = block_height + start
         if end is not None:
@@ -762,41 +769,12 @@ class HarmonySimulator:
         assert(end<=block_height)
         return start, end
     
-    def sync_block(self):
-        cur = self.block_height()
-        if cur == self.simulate_blocks:
-            return
-        self.network.ctrl(Protocol.MSG_TYPE_CTRL_SYNC_BLOCK, cur)
-        results = self.network.join(Protocol.MSG_TYPE_CTRL_SEND_BLOCK)
-        for shard, blocks in results.items():
-            self.sblock[shard].extend(blocks)
-    
     def sync_pool(self):
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_SYNC_POOL)
         results = self.network.join(Protocol.MSG_TYPE_CTRL_SEND_POOL)
         for shard, (tx_pool, tx_forward) in results.items():
             self.stx_pool[shard] = tx_pool
             self.stx_forward[shard] = tx_forward
-    
-    def get_block_n_txs(self, start=0, end=None):
-        self.sync_block()
-        start, end = self._adjust_block_slice(start, end)
-        n_txs = [0]*self.n_shards
-        for shard,blocks in enumerate(self.sblock):
-            for block_id,block in enumerate(blocks[start:end]):
-                n_txs[shard] += len(block)
-        return n_txs
-
-    def get_block_txs(self, start=0, end=None):
-        self.sync_block()
-        start, end = self._adjust_block_slice(start, end)
-        txs = []
-        for shard,blocks in enumerate(self.sblock):
-            for block_id,block in enumerate(blocks[start:end]):
-                for from_addr, to_addr, _, from_shard, *_ in block:
-                    if from_shard == shard: # only return inner txs and out txs
-                        txs.append((shard, block_id+start, from_addr, to_addr))
-        return pd.DataFrame(txs, columns=['shard', 'block', 'from', 'to'])
     
     def get_pending_txs(self, forward=False):
         self.sync_pool()
@@ -832,7 +810,7 @@ class HarmonySimulator:
         for _ in range(self.n_blocks):
             slot_txs = self.client.next(time_interval=self.block_interval)
             timestamp = self.simulate_time
-            for from_addr, to_addr, *_ in slot_txs.itertuples(index=False, name=None):
+            for from_addr, to_addr, *_ in slot_txs:
                 from_shard = self.allocate.allocate(from_addr)
                 to_shard = self.allocate.allocate(to_addr)
                 #tx store in tuple: (from_addr, to_addr, timestamp, from_shard, to_shard)
@@ -842,11 +820,12 @@ class HarmonySimulator:
             self.network.ctrl(Protocol.MSG_TYPE_CTRL_BLOCK)
             self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
             self.simulate_time += self.block_interval
-            self.simulate_blocks += 1
+            self.block_height += 1
         return self.client.done(time_interval=self.epoch_time)
     
     def load_info(self):
         # read info from file
+        self.sblock = [[] for _ in range(self.n_shards)]
         for shard in range(self.n_shards):
             blocks = []
             self.sblock[shard] = blocks

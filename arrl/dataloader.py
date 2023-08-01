@@ -1,5 +1,72 @@
 import pandas as pd
-import datetime
+from utils.timeutil import strftime, strptime
+from collections import deque
+import numpy as np
+import math
+import itertools
+
+class TxLoader:
+    def __init__(self, cursor, min_block_number, max_block_number, tx_per_block=150, columns=['blockNumber','transactionIndex','from','to','gas'], dropna=True, prefetch=1000):
+        print("TxLoader:", min_block_number, max_block_number)
+        self.cursor = cursor
+        self.min_block_number = min_block_number
+        self.max_block_number = max_block_number
+        self.dropna = dropna
+        self.cache = deque()
+        self.tsql = "select %s from tx where block_number>=%d and block_number<=%d"
+        self.columns=columns
+        self.columns_str = ','.join(['`'+c+'`' for c in self.columns])
+        count_sql = self.tsql%("count(*)", min_block_number, max_block_number)
+        print(count_sql, end=" : ")
+        cursor.execute(count_sql)
+        count = self.cursor.fetchone()[0]
+        print(count)
+        self.count = count
+        self.tx_per_block = tx_per_block
+        
+        self.block_number = min_block_number
+        self.idx = 0
+        self.prefetch = prefetch
+    
+    def __len__(self):
+        return self.count
+    
+    def next(self, n):
+        # print('Get Data:', start, stop)
+        if self.idx + n > self.count:
+            n = self.count - self.idx
+        results = []
+        for _ in range(min(n, len(self.cache))):
+            results.append(self.cache.popleft())
+        while len(results)<n: # need fetch from db
+            # estimate number of blocks
+            n_blocks = math.ceil((n-len(results))/self.tx_per_block) + self.prefetch
+            start_block_number = self.block_number
+            stop_block_number = min(self.block_number+n_blocks, self.max_block_number)
+            get_sql = self.tsql%(self.columns_str, start_block_number, stop_block_number)
+            # print(get_sql, end=" : ")
+            self.cursor.execute(get_sql)
+            n_valid = 0
+            for n_fetch in itertools.count():
+                row = self.cursor.fetchone()
+                if row is None:
+                    break
+                if self.dropna:
+                    drop = False
+                    for value in row:
+                        if value == '':
+                            drop = True
+                            break
+                    if drop:
+                        continue
+                n_valid += 1
+                if len(results)<n:
+                    results.append(row)
+                else:
+                    self.cache.append(row)
+            # print(n_fetch, n_valid)
+        self.idx += len(results)
+        return results
 
 class DataLoader:
     def __init__(self, host="127.0.0.1", port=3306, user='root', db='arrl', charset='utf8'):
@@ -13,7 +80,7 @@ class DataLoader:
     def close(self):
         self.db.close()
 
-    def load_data(self, start_time=None, end_time=None):
+    def load_data(self, start_time=None, end_time=None, columns=['from','to'], dropna=True):
         # start_time : timestamp or time str with format "%Y-%m-%d %H:%M:%S"
         def parse_time(t):
             if t is None:
@@ -21,7 +88,7 @@ class DataLoader:
             if isinstance(t, int):
                 pass
             elif isinstance(t, str):
-                t = int(datetime.datetime.strptime(t, '%Y-%m-%d %H:%M:%S').timestamp())
+                t = strptime(t)
             else:
                 raise TypeError(f"{t} is not an int or str")
             return t
@@ -41,16 +108,9 @@ class DataLoader:
         data = cursor.fetchall()
         df_block = pd.DataFrame(data, columns=['blockNumber','gasLimit','gasUsed','transactionNumber','timestamp'])
         print(len(df_block))
-        if end_time is None:
-            sql = "select * from tx where block_number>=%d"%df_block.iloc[0,0]
-        else:
-            sql = "select * from tx where block_number>=%d and block_number<=%d"%(df_block.iloc[0,0],df_block.iloc[-1,0])
-        print(sql, end=' : ')
-        cursor.execute(sql)
-        data = cursor.fetchall()
-        df_tx = pd.DataFrame(data, columns=['blockNumber','transactionIndex','from','to','gas'])
-        print(len(df_tx))
-        return df_block, df_tx
+        min_block_number = df_block.iloc[0,0]
+        max_block_number = df_block.iloc[-1,0]
+        return TxLoader(cursor=cursor, min_block_number=min_block_number, max_block_number=max_block_number, columns=columns, dropna=dropna)
 
 class XBlockLoader:
 

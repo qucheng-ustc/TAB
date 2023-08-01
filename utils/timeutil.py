@@ -5,6 +5,9 @@ def strftime(timestamp=-1, fmt='%Y-%m-%d %H:%M:%S'):
     if timestamp>=0:
         return datetime.datetime.fromtimestamp(timestamp).strftime(fmt)
 
+def strptime(timestr, fmt='%Y-%m-%d %H:%M:%S'):
+    return int(datetime.datetime.strptime(timestr, fmt).timestamp())
+
 start_time = {}
 
 def start(timer=0):
