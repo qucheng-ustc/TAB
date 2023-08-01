@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import collections
 import itertools
+import os
 
 # Undirected graph with edge weights and vertex weights(Optional)
 class Graph:
@@ -128,6 +129,7 @@ class Graph:
         if v_weight is None:
             v_weight = self.v_weight
         self.save_path = path
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
             format = '011' if v_weight else '001'
             f.write(f'{self.n_vertex} {self.n_edge} {format}\n')
