@@ -1,5 +1,6 @@
 import functools
 import logging
+import os
 
 @functools.cache
 def get_logger(name='arrl',
@@ -14,7 +15,10 @@ def get_logger(name='arrl',
     had_fmt = logging.Formatter(fmt=fmt)
     handler.setFormatter(had_fmt)
     logger.addHandler(handler)
- 
+
+    dirname = os.path.dirname(file_name)
+    if not os.path.exists(dirname):
+        os.makedirs(dirname)
     file_handler = logging.FileHandler(file_name, encoding='utf-8')
     file_handler.setLevel(level)
     fh_fmt = logging.Formatter(fmt=fmt)
