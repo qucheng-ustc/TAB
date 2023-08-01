@@ -734,6 +734,7 @@ class HarmonySimulator:
         self.client.reset(ptx=ptx)
         self.simulate_time = 0
         self.block_height = 0
+        self.n_epochs = 0
 
         self.stx_pool = [deque() for _ in range(self.n_shards)]
         self.stx_forward = [deque() for _ in range(self.n_shards)]
@@ -821,6 +822,7 @@ class HarmonySimulator:
             self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
             self.simulate_time += self.block_interval
             self.block_height += 1
+        self.n_epochs += 1
         return self.client.done(time_interval=self.epoch_time)
 
     def info(self, start=0, end=None):
@@ -890,8 +892,15 @@ class HarmonySimulator:
             tx_rate = self.tx_rate,
             tx_per_block = self.tx_per_block,
             block_interval = self.block_interval,
+            max_epochs = self.max_epochs,
             simulate_time = self.simulate_time,
+            block_height = self.block_height,
+            n_epochs = self.n_epochs,
             n_tx = n_tx,
+            start_block = start,
+            end_block = end,
+            start_time = start_time,
+            end_time = end_time,
             total_time = total_time,
             n_block = n_block,
             target_n_block = self.n_shards*total_time/self.block_interval,

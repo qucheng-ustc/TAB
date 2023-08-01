@@ -20,6 +20,7 @@ def test_harmony(txs, method='last', args=None):
     tx_per_block = args.tx_per_block
     block_interval = args.block_interval
     static_allocator = StaticAccountAllocate(n_shards=n_shards)
+    n_epochs = args.n_epochs
 
     overhead = None
     if args.overhead:
@@ -43,6 +44,13 @@ def test_harmony(txs, method='last', args=None):
             return TableDoubleAccountAllocate(n_shards=n_shards, fallback=static_allocator)
         else:
             return TableAccountAllocate(n_shards=n_shards, fallback=static_allocator)
+    def epoch_range(simulator):
+        if n_epochs < 0:
+            epochs = simulator.max_epochs
+        else:
+            assert(simulator.max_epochs>=n_epochs)
+            epochs = n_epochs
+        return tqdm(range(epochs))
     
     if 'none' == method:
         log.print('Static allocation:')
@@ -50,7 +58,7 @@ def test_harmony(txs, method='last', args=None):
         simulator_args['allocate'] = get_allocator('none')
         simulator = HarmonySimulator(**simulator_args)
         simulator.reset()
-        for _ in tqdm(range(simulator.max_epochs)):
+        for _ in epoch_range(simulator):
             simulator.step(None)
 
     if 'pending' == method:
@@ -59,11 +67,10 @@ def test_harmony(txs, method='last', args=None):
         simulator_args['allocate'] = get_allocator()
         simulator = HarmonySimulator(**simulator_args)
         simulator.reset()
-        for _ in tqdm(range(simulator.max_epochs)):
+        for _ in epoch_range(simulator):
             graph = Graph(simulator.get_pending_txs(forward=False)).save('./metis/graphs/test_harmony_pending.txt')
             account_table = graph.partition(n_shards)
-            done = simulator.step(account_table)
-            if done: break
+            simulator.step(account_table)
 
     if 'shard' == method:
         log.print('Allocation by shard:')
@@ -72,9 +79,8 @@ def test_harmony(txs, method='last', args=None):
         simulator_args['shard_allocation'] = True
         simulator = HarmonySimulator(**simulator_args)
         simulator.reset()
-        for epoch in tqdm(range(simulator.max_epochs)):
-            done = simulator.step(None)
-            if done: break
+        for epoch in epoch_range(simulator):
+            simulator.step(None)
 
     simulator.close()
     info = simulator.info(n_blocks)
@@ -88,6 +94,7 @@ if __name__=='__main__':
     parser.add_argument('--compress', nargs="*", type=int, default=None)
     parser.add_argument('--pmatch', action="store_true")
     parser.add_argument('--overhead', action="store_true")
+    parser.add_argument('--n_epochs', type=int, default=-1)
     parser.add_argument('--save_path', type=str, default='/tmp/harmony')
     args = parser.parse_args()
     if args.n_shards==0: args.n_shards = 1 << args.k

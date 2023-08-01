@@ -7,7 +7,7 @@ import itertools
 
 class TxLoader:
     def __init__(self, cursor, min_block_number, max_block_number, tx_per_block=150, columns=['blockNumber','transactionIndex','from','to','gas'], dropna=True, prefetch=1000):
-        print("TxLoader:", min_block_number, max_block_number)
+        # print("TxLoader:", min_block_number, max_block_number)
         self.cursor = cursor
         self.min_block_number = min_block_number
         self.max_block_number = max_block_number
