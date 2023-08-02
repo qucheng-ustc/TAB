@@ -6,7 +6,7 @@ import math
 import itertools
 
 class TxLoader:
-    def __init__(self, cursor, min_block_number, max_block_number, tx_per_block=150, columns=['blockNumber','transactionIndex','from','to','gas'], dropna=True, prefetch=1000):
+    def __init__(self, cursor, min_block_number, max_block_number, tx_per_block=150, columns=['blockNumber','transactionIndex','from','to','gas'], dropna=True, prefetch=1000, droprate_pred=0.1):
         # print("TxLoader:", min_block_number, max_block_number)
         self.cursor = cursor
         self.min_block_number = min_block_number
@@ -22,6 +22,8 @@ class TxLoader:
         count = self.cursor.fetchone()[0]
         print(count)
         self.count = count
+        if dropna:
+            self.count = int(self.count*(1-droprate_pred))
         self.tx_per_block = tx_per_block
         
         self.block_number = min_block_number
@@ -64,6 +66,9 @@ class TxLoader:
                     results.append(row)
                 else:
                     self.cache.append(row)
+            if n_fetch == 0:
+                print("Error: db empty.")
+                break
             # print(n_fetch, n_valid)
         self.idx += len(results)
         return results

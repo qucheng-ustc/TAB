@@ -661,7 +661,7 @@ class ShardSimulator(mp.Process):
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_CTRL_TRANSITION:
                     # gc before transition
-                    gc.collect()
+                    # gc.collect()
                     # re-allocate tx pool
                     new_tx_pool = deque()
                     new_tx_forward = deque()
