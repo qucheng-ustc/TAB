@@ -7,8 +7,10 @@ from strategy.account import StaticAccountAllocate, TableDoubleAccountAllocate, 
 from env.harmony import HarmonySimulator, Overhead
 from env.client import DoubleAddrClient, Client
 import exp
-
+import time
+import random
 import numpy as np
+random.seed(0)
 np.random.seed(0)
 
 log = exp.log.get_logger('test_harmony', file_name='logs/test_harmony.log')
@@ -68,7 +70,7 @@ def test_harmony(txs, method='last', args=None):
         simulator = HarmonySimulator(**simulator_args)
         simulator.reset()
         for _ in epoch_range(simulator):
-            graph = Graph(simulator.get_pending_txs(forward=False)).save('./metis/graphs/test_harmony_pending.txt')
+            graph = Graph(simulator.get_pending_txs(forward=False)).save(f'./metis/graphs/test_harmony_pending_{time.time_ns()%10000}.txt')
             account_table = graph.partition(n_shards)
             simulator.step(account_table)
 

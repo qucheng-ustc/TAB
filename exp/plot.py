@@ -61,14 +61,15 @@ class Filter:
 default_filter = Filter({k:[v] for k,v in default_values.items()})
 
 class RecordPloter:
-    def __init__(self, record_path, filter=None):
+    def __init__(self, record_path, filter=None, params=["[2,400]","[4,800]","[8,1600]","[16,3200]","[32,6400]"]):
         self.record_path = pathlib.Path(record_path)
         self.records = []
         for filename in self.record_path.glob("*.json"):
             print(filename)
             recorder = Recorder.load(filename)
             self.records.append(recorder)
-        self.filter=filter
+        self.filter = filter
+        self.params = params
     
     def get_records(self, filter=None):
         filter = Filter(filter, self.filter)
@@ -77,69 +78,64 @@ class RecordPloter:
             if filter.check(record.params):
                 records.append(record)
         return records
-
-    def plot_actual_throughput(self, filter=None):
-        records = self.get_records(filter)
+    
+    def _prepare_data(self, records, key, params):
         methods = ['TAB-D','TAB','Transformers','Monoxide']
-        params = ["[2,400]","[4,800]","[8,1600]","[16,3200]","[32,6400]"]
-        tps = {}
+        data = {}
         for record in records:
             method = record.params['method']
             double_addr = record.params['double_addr']
             if method == 'shard':
                 if double_addr:
-                    mtps = tps.setdefault('TAB-D', {})
+                    mdata = data.setdefault('TAB-D', {})
                 else:
-                    mtps = tps.setdefault('TAB', {})
+                    mdata = data.setdefault('TAB', {})
             elif method == 'none' and not double_addr:
-                mtps = tps.setdefault('Monoxide', {})
+                mdata = data.setdefault('Monoxide', {})
             elif method == 'pending' and not double_addr:
-                mtps = tps.setdefault('Transformers', {})
+                mdata = data.setdefault('Transformers', {})
             else:
                 continue
             n_shards = record.params['n_shards']
             tx_rate = record.params['tx_rate']
-            actual_tps = record.get('info')['actual_throughput']
-            mtps[f"[{n_shards},{tx_rate}]"] = actual_tps
-        plt.figure()
+            value = record.get('info')[key]
+            mdata.setdefault(f"[{n_shards},{tx_rate}]",[]).append(value)
+        data_dict = {}
         for i, method in enumerate(methods):
-            tps_list = []
-            mtps = tps[method]
+            data_list = []
+            mdata = data[method]
             for param in params:
-                tps_list.append(mtps[param])
-            plt.bar(np.arange(len(params))+i*0.2, tps_list, 0.2, label=method)
+                datas = mdata[param]
+                print(f'Method={method},Param={param},Key={key},Values={datas}')
+                data_list.append(np.average(datas))
+            data_dict[method] = data_list
+        return data_dict
+    
+    def _plot_bar(self, data_dict, params):
+        plt.figure()
+        for i, method in enumerate(data_dict):
+            data_list = data_dict[method]
+            plt.bar(np.arange(len(data_list))+i*0.2, data_list, 0.2, label=method)
+        plt.xticks(np.arange(len(params))+0.1*len(data_dict), params)
         plt.legend()
         plt.show()
     
+    def plot_cross_rate(self, filter=None):
+        records = self.get_records(filter)
+        cross_dict = self._prepare_data(records, 'prop_cross_tx', params=self.params)
+        self._plot_bar(cross_dict, params=self.params)
+    
+    def plot_utility(self, filter=None):
+        records = self.get_records(filter)
+        waste_dict = self._prepare_data(records, 'prop_wasted', params=self.params)
+        self._plot_bar(waste_dict, params=self.params)
+
+    def plot_actual_throughput(self, filter=None):
+        records = self.get_records(filter)
+        tps_dict = self._prepare_data(records, 'actual_throughput', params=self.params)
+        self._plot_bar(tps_dict, params=self.params)
+    
     def plot_tx_delay(self, filter=None):
         records = self.get_records(filter)
-        methods = ['TAB-D','TAB','Transformers','Monoxide']
-        params = ["[2,400]","[4,800]","[8,1600]","[16,3200]","[32,6400]"]
-        tps = {}
-        for record in records:
-            method = record.params['method']
-            double_addr = record.params['double_addr']
-            if method == 'shard':
-                if double_addr:
-                    mtps = tps.setdefault('TAB-D', {})
-                else:
-                    mtps = tps.setdefault('TAB', {})
-            elif method == 'none' and not double_addr:
-                mtps = tps.setdefault('Monoxide', {})
-            elif method == 'pending' and not double_addr:
-                mtps = tps.setdefault('Transformers', {})
-            else:
-                continue
-            n_shards = record.params['n_shards']
-            tx_rate = record.params['tx_rate']
-            actual_tps = record.get('info')['tx_delay']
-            mtps[f"[{n_shards},{tx_rate}]"] = actual_tps
-        plt.figure()
-        for i, method in enumerate(methods):
-            tps_list = []
-            mtps = tps[method]
-            for param in params:
-                tps_list.append(mtps[param])
-            plt.bar(np.arange(len(params))+i*0.2, tps_list, 0.2, label=method)
-        plt.legend()
-        plt.show()
+        delay_dict = self._prepare_data(records, 'tx_delay', params=self.params)
+        self._plot_bar(delay_dict, params=self.params)

@@ -660,7 +660,7 @@ class ShardSimulator(mp.Process):
                         self.overhead.allocation_table_cost(allocate)
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_CTRL_TRANSITION:
-                    # gc before transition
+                    # gc before transition, reduce memory use
                     # gc.collect()
                     # re-allocate tx pool
                     new_tx_pool = deque()
