@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from arrl.dataloader import get_default_dataloader
-from arrl.preprocess import drop_contract_creation_tx
 
 import statsmodels.api as sm
 from statsmodels.tools.eval_measures import mse
@@ -13,9 +12,10 @@ def test_stack_pred(txs, window, step_size):
     print('Real data:')
     for step in range(0, len(txs)-window*step_size, (window-1)*step_size):
         print('Step:', step)
-        stxs = txs.iloc[step:step+window*step_size]
-        print('Block number:', min(stxs.blockNumber), max(stxs.blockNumber), max(stxs.blockNumber)-min(stxs.blockNumber))
-        block_txs = pd.DataFrame({'block':np.repeat(np.arange(window), step_size), 'from':stxs['from'], 'to':stxs['to']})
+        stxs = txs.next(window*step_size)
+        blockNumber, tx_from, tx_to = tuple(zip(*stxs))
+        print('Block number:', min(blockNumber), max(blockNumber), max(blockNumber)-min(blockNumber))
+        block_txs = pd.DataFrame({'block':np.repeat(np.arange(window), step_size), 'from':tx_from, 'to':tx_to})
         hgraph = GraphStack(block_txs, debug=True)
         weight_matrix = hgraph.get_weight_matrix()
         exog = pd.DataFrame(weight_matrix[:,:-2].todense())
@@ -47,9 +47,10 @@ def test_stack_update(txs, step_size):
     hgraph = GraphStack()
     for step in range(0, len(txs), step_size):
         print('Step:', step)
-        stxs = txs.iloc[step:min(step+step_size,len(txs))]
-        print('Block number:', min(stxs.blockNumber), max(stxs.blockNumber), max(stxs.blockNumber)-min(stxs.blockNumber))
-        block_txs = pd.DataFrame({'block':np.repeat(step, len(stxs)), 'from':stxs['from'], 'to':stxs['to']})
+        stxs = txs.next(min(step_size,len(txs)-step))
+        blockNumber, tx_from, tx_to = tuple(zip(*stxs))
+        print('Block number:', min(blockNumber), max(blockNumber), max(blockNumber)-min(blockNumber))
+        block_txs = pd.DataFrame({'block':np.repeat(step, len(stxs)), 'from':tx_from, 'to':tx_to})
         hgraph.update(block_txs, debug=True)
 
 if __name__=='__main__':
@@ -59,12 +60,11 @@ if __name__=='__main__':
     parser.add_argument('--step_size', type=int, default=20000)
     parser.add_argument('--start_time', type=str, default='2021-08-01 00:00:00')
     parser.add_argument('--end_time', type=str, default=None)
-    parser.add_argument('type', type=str, default='pred', choices=['pred', 'update'])
+    parser.add_argument('--type', type=str, default='pred', choices=['pred', 'update'])
     args = parser.parse_args()
 
     loader = get_default_dataloader()
-    blocks, txs = loader.load_data(start_time=args.start_time, end_time=args.end_time)
-    drop_contract_creation_tx(txs)
+    txs = loader.load_data(start_time=args.start_time, end_time=args.end_time, columns=['block_number','from','to'])
 
     if args.type == 'update':
         test_stack_update(txs=txs, step_size=args.step_size)

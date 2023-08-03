@@ -43,10 +43,13 @@ class TxLoader:
         while len(results)<n: # need fetch from db
             # estimate number of blocks
             n_blocks = math.ceil((n-len(results))/self.tx_per_block) + self.prefetch
-            start_block_number = self.block_number
-            stop_block_number = min(self.block_number+n_blocks, self.max_block_number)
-            get_sql = self.tsql%(self.columns_str, start_block_number, stop_block_number)
-            # print(get_sql, end=" : ")
+            min_block_number = self.block_number
+            max_block_number = min(self.block_number+n_blocks, self.max_block_number)
+            if min_block_number > max_block_number:
+                print("Error: no block left.")
+                break
+            get_sql = self.tsql%(self.columns_str, min_block_number, max_block_number)
+            print(get_sql, end=" : ")
             self.cursor.execute(get_sql)
             n_valid = 0
             for n_fetch in itertools.count():
@@ -67,9 +70,10 @@ class TxLoader:
                 else:
                     self.cache.append(row)
             if n_fetch == 0:
-                print("Error: db empty.")
+                print("Error: no select result.")
                 break
-            # print(n_fetch, n_valid)
+            print(n_fetch, n_valid)
+            self.block_number = max_block_number + 1
         self.idx += len(results)
         return results
 

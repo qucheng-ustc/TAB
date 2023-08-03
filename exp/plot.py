@@ -105,9 +105,10 @@ class RecordPloter:
             data_list = []
             mdata = data[method]
             for param in params:
-                datas = mdata[param]
-                print(f'Method={method},Param={param},Key={key},Values={datas}')
-                data_list.append(np.average(datas))
+                if param in mdata:
+                    datas = mdata[param]
+                    print(f'Method={method},Param={param},Key={key},Values={datas}')
+                    data_list.append(np.average(datas))
             data_dict[method] = data_list
         return data_dict
     
@@ -128,7 +129,8 @@ class RecordPloter:
     def plot_utility(self, filter=None):
         records = self.get_records(filter)
         waste_dict = self._prepare_data(records, 'prop_wasted', params=self.params)
-        self._plot_bar(waste_dict, params=self.params)
+        utility_dict = {k:[1.-i for i in v] for k,v in waste_dict.items()}
+        self._plot_bar(utility_dict, params=self.params)
 
     def plot_actual_throughput(self, filter=None):
         records = self.get_records(filter)

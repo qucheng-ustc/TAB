@@ -1,7 +1,6 @@
 import os
 from tqdm import tqdm
 from arrl.dataloader import get_default_dataloader
-from arrl.preprocess import drop_contract_creation_tx
 from graph.graph import Graph
 from strategy.account import StaticAccountAllocate, TableDoubleAccountAllocate, TableAccountAllocate
 from env.harmony import HarmonySimulator, Overhead
