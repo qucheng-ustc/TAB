@@ -5,8 +5,11 @@ from arrl.dataloader import get_default_dataloader
 
 import statsmodels.api as sm
 from statsmodels.tools.eval_measures import mse
+from exp.log import get_logger
 
 from graph.stack import GraphStack
+
+log = get_logger(file_name="./logs/test_stack.log")
 
 def test_stack_pred(txs, window, step_size):
     print('Real data:')
@@ -42,7 +45,7 @@ def test_stack_pred(txs, window, step_size):
     res = ols.fit()
     print(res.summary())
 
-def test_stack_update(txs, step_size):
+def test_stack_update(txs, step_size, debug=False):
     print('Test stack update:')
     hgraph = GraphStack()
     for step in range(0, len(txs), step_size):
@@ -51,7 +54,8 @@ def test_stack_update(txs, step_size):
         blockNumber, tx_from, tx_to = tuple(zip(*stxs))
         print('Block number:', min(blockNumber), max(blockNumber), max(blockNumber)-min(blockNumber))
         block_txs = pd.DataFrame({'block':np.repeat(step, len(stxs)), 'from':tx_from, 'to':tx_to})
-        hgraph.update(block_txs, debug=True)
+        hgraph.update(block_txs, debug=debug)
+        log.print(len(hgraph.vertexes), ': Vertex:', [len(v) for v in hgraph.vertexes], " New:", [len(v) for v in hgraph.new_vertexes])
 
 if __name__=='__main__':
     import argparse
@@ -61,12 +65,13 @@ if __name__=='__main__':
     parser.add_argument('--start_time', type=str, default='2021-08-01 00:00:00')
     parser.add_argument('--end_time', type=str, default=None)
     parser.add_argument('--type', type=str, default='pred', choices=['pred', 'update'])
+    parser.add_argument('--debug', action="store_true")
     args = parser.parse_args()
 
     loader = get_default_dataloader()
     txs = loader.load_data(start_time=args.start_time, end_time=args.end_time, columns=['block_number','from','to'])
 
     if args.type == 'update':
-        test_stack_update(txs=txs, step_size=args.step_size)
+        test_stack_update(txs=txs, step_size=args.step_size, debug=args.debug)
     else:
         test_stack_pred(txs=txs, window=args.window, step_size=args.step_size)

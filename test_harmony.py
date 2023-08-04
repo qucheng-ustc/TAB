@@ -69,12 +69,18 @@ def test_harmony(txs, method='last', args=None):
         simulator = HarmonySimulator(**simulator_args)
         simulator.reset()
         for _ in epoch_range(simulator):
+            if overhead is not None:
+                overhead.partition_begin()
             graph = Graph(simulator.get_pending_txs(forward=False)).save(f'./metis/graphs/test_harmony_pending_{time.time_ns()%10000}.txt')
             account_table = graph.partition(n_shards)
+            if overhead is not None:
+                overhead.partition_end()
             simulator.step(account_table)
 
     if 'shard' == method:
         log.print('Allocation by shard:')
+        if args.pmatch == True and args.compress == None:
+            raise ValueError("pmatch should set with compress")
         simulator_args['client'] = get_client()
         simulator_args['allocate'] = get_allocator()
         simulator_args['shard_allocation'] = True

@@ -308,7 +308,9 @@ class GlobalGraph:
                 adjwgt.append(weight)
                 i += 1
             xadj.append(i)
-        _, parts = mymetis.partition(xadj=xadj, adjncy=adjncy, vwgt=vwgt, adjwgt=adjwgt, nparts=n)
+        cut, parts = mymetis.partition(xadj=xadj, adjncy=adjncy, vwgt=vwgt, adjwgt=adjwgt, nparts=n)
+        if debug:
+            print("---PARTITION--- Parts:", len(parts), "Cut:", cut)
         if pmatch:
             import munkres
             matrix = np.zeros(shape=(n,n), dtype=int)
@@ -321,14 +323,22 @@ class GlobalGraph:
                 else:
                     # orphan vertex, generated from outbound txs where relay txs are still in tx forward
                     orphan += 1
-            # print("Total:", self.n_vertex, "Orphan:", orphan)
             cost_matrix = munkres.make_cost_matrix(matrix)
+            if debug:
+                print("---PMATCH--- Total:", self.n_vertex, "Orphan:", orphan, "Matrix:")
+                print(matrix)
+                print("Cost Matrix:")
+                print(cost_matrix)
             m = munkres.Munkres()
             indexes = m.compute(cost_matrix)
             part_match = {}
             for row, column in indexes:
                 part_match[row] = column
-            # print(indexes)
+            if debug:
+                reduced = 0
+                for row, column in indexes:
+                    reduced += cost_matrix[row][column] - cost_matrix[row][row]
+                print("Indexes:", indexes, "Reduced Cost:", reduced)
             partition_table = {a:part_match[s] for a,s in zip(self.vertex_list,parts)}
             # further reduce cost by reserve orphan vertexes and low weight vertexes
             if weight_limit > 0:
@@ -338,7 +348,7 @@ class GlobalGraph:
                         del partition_table[a]
                         orphan -= 1
                     elif self.vertex_weights[v]<weight_limit:
-                        partition_table[a] = self.old_partition[v]
+                        del partition_table[a]
                 assert(orphan == 0) # check all orphan vertexes are deleted
         else:
             partition_table = {a:s for a,s in zip(self.vertex_list,parts)}
@@ -392,6 +402,7 @@ class Overhead:
             #    total             112 Bytes
             self.account_size = self.int64_size + self.addr_size + self.int_size + self.hash_size
         self.record = record
+        self.timer = {}
         self.reset()
     
     def reset(self):
@@ -400,25 +411,31 @@ class Overhead:
                 "state_transition":[],
                 "local_graph":[],
                 "state_size":[],
-                "allocation_table":[],
-                "partition_time":[],
+                "allocation_table":[]
             }
     
     def save(self, path, skip=1):
         costs = {k:v[skip:] for k,v in self.costs.items()}
         with open(path, "w") as f:
             json.dump(costs, f)
+    
+    def timer_start(self, name, t):
+        start_time = t
+        self.timer[name] = start_time
+        return start_time
+    
+    def timer_stop(self, name, t):
+        stop_time = t
+        elapsed_time = stop_time - self.timer[name]
+        if self.record:
+            self.costs.setdefault(name, []).append(elapsed_time)
+        return elapsed_time
 
     def partition_begin(self):
-        self.start_time = time.perf_counter()
-        return self.start_time
+        return self.timer_start('partition_time', time.process_time())
     
     def partition_end(self):
-        self.end_time = time.perf_counter()
-        elapsed_time = self.end_time-self.start_time
-        if self.record:
-            self.costs['partition_time'].append(elapsed_time)
-        return elapsed_time
+        return self.timer_stop('partition_time', time.process_time())
 
     def allocation_table_cost(self, allocate):
         account_table = None
@@ -441,18 +458,19 @@ class Overhead:
 
     def state_size_cost(self, n_shards, n_trans):
         proof_size = int(math.ceil(math.log(n_shards)))*self.hash_size
-        state_size = n_trans*self.account_size
-        cost = proof_size*n_shards*n_shards + state_size
+        cost = [0]*n_shards
+        for shard in range(n_shards):
+            cost[shard] = proof_size*(n_shards-1) + n_trans[shard]*self.account_size
         if self.record:
             self.costs['state_size'].append(cost)
         return cost
 
     def state_transition_cost(self, allocate, new_table: dict):
-        cost = 0
+        cost = [0]*allocate.n_shards
         for a, new_part in new_table.items():
             old_part = allocate.allocate(a)
             if new_part != old_part:
-                cost += 1
+                cost[old_part] += 1
         if self.record:
             self.costs['state_transition'].append(cost)
         return cost
@@ -522,7 +540,7 @@ class NetworkSimulator:
         self.closed = True
 
 class ShardSimulator(mp.Process):
-    def __init__(self, idx: int, net: NetworkSimulator, allocate, tx_per_block, n_blocks, n_shards, shard_allocation, compress=None, pmatch=False, overhead:Overhead|None=None, save_path=None, *, daemon=True):
+    def __init__(self, idx: int, net: NetworkSimulator, allocate, tx_per_block, n_blocks, n_shards, shard_allocation, compress=None, pmatch=False, overhead:Overhead|None=None, save_path=None, debug=False, *, daemon=True):
         super().__init__(daemon=daemon)
         self.idx = idx
         self.net = net
@@ -539,17 +557,14 @@ class ShardSimulator(mp.Process):
         if self.compress is not None:
             if len(self.compress)>2:
                 self.weight_limit = self.compress[2]
-        
         self.blocks_path = os.path.join(self.save_path,f'{self.idx}_blocks.txt')
-        with open(self.blocks_path, 'w') as file:
-            file.truncate(0)
         self.block_height = 0
+        self.debug = debug
     
     def save_block(self, block):
-        with open(self.blocks_path, 'a') as f:
-            for tx_id, tx in enumerate(block):
-                # tx : from_addr, to_addr, timestamp, from_shard, to_shard, block_height
-                f.write(f'{self.block_height}|{tx_id}|{tx[0]}|{tx[1]}|{tx[2]}|{tx[3]}|{tx[4]}|{tx[5]}\n')
+        for tx_id, tx in enumerate(block):
+            # tx : from_addr, to_addr, timestamp, from_shard, to_shard, block_height
+            self.block_file.write(f'{self.block_height}|{tx_id}|{tx[0]}|{tx[1]}|{tx[2]}|{tx[3]}|{tx[4]}|{tx[5]}\n')
 
     def save_info(self, tx_pool, tx_forward):
         tx_pool_path = os.path.join(self.save_path,f'{self.idx}_tx_pool.txt')
@@ -576,7 +591,7 @@ class ShardSimulator(mp.Process):
         shard_allocation = self.shard_allocation
         tx_pool = deque()
         tx_forward = deque()
-        # blocks = []
+        self.block_file = open(self.blocks_path, 'w')
         local_graph = LocalGraph()
         if idx==0:
             local_graphs = dict()
@@ -585,6 +600,7 @@ class ShardSimulator(mp.Process):
             match msg_type:
                 case Protocol.MSG_TYPE_CTRL_RESET:
                     self.save_info(tx_pool, tx_forward)
+                    self.block_file.close()
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPORT)
                     return
                 case Protocol.MSG_TYPE_CTRL_INFO:
@@ -608,13 +624,10 @@ class ShardSimulator(mp.Process):
                             net.send(idx, to_shard, Protocol.MSG_TYPE_SHARD_FORWARD_TX, tx)
                     local_graph.append(block_txs)
                     self.save_block(block_txs)
-                    # delete block_txs after save it to file
-                    del block_txs
                     self.block_height += 1
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_SHARD_FORWARD_TX:
-                    tx = content
-                    tx_forward.append(tx)
+                    tx_forward.append(content)
                 case Protocol.MSG_TYPE_CTRL_ALLOCATION if shard_allocation:
                     # construct local graph and send to shard 0
                     local_graph.prepare()
@@ -631,6 +644,9 @@ class ShardSimulator(mp.Process):
                     else:
                         net.send(idx, 0, Protocol.MSG_TYPE_SHARD_GRAPH, local_graph)
                 case Protocol.MSG_TYPE_CTRL_ALLOCATION: # use external allocation method
+                    if self.overhead is not None and content is not None:
+                        n_trans = self.overhead.state_transition_cost(allocate=allocate, new_table=content)
+                        self.overhead.state_size_cost(n_shards=n_shards, n_trans=n_trans)
                     allocate.apply(content)
                     if idx == 0 and self.overhead is not None:
                         self.overhead.allocation_table_cost(allocate)
@@ -642,7 +658,7 @@ class ShardSimulator(mp.Process):
                             self.overhead.local_graph_cost(local_graphs.values())
                             self.overhead.partition_begin()
                         global_graph = GlobalGraph(local_graphs=local_graphs.values())
-                        account_table = global_graph.partition(n_shards, pmatch=self.pmatch, weight_limit=self.weight_limit)
+                        account_table = global_graph.partition(n_shards, pmatch=self.pmatch, weight_limit=self.weight_limit, debug=self.debug)
                         if self.overhead is not None:
                             self.overhead.partition_end()
                             n_trans = self.overhead.state_transition_cost(allocate=allocate, new_table=account_table)
@@ -660,8 +676,6 @@ class ShardSimulator(mp.Process):
                         self.overhead.allocation_table_cost(allocate)
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_CTRL_TRANSITION:
-                    # gc before transition, reduce memory use
-                    # gc.collect()
                     # re-allocate tx pool
                     new_tx_pool = deque()
                     new_tx_forward = deque()
@@ -685,13 +699,12 @@ class ShardSimulator(mp.Process):
                     tx_forward = new_tx_forward
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_SHARD_TX | Protocol.MSG_TYPE_CLIENT_TX:
-                    tx = content
-                    tx_pool.append(tx)
+                    tx_pool.append(content)
                 case Protocol.MSG_TYPE_CTRL_SYNC_POOL:
                     net.report(idx, Protocol.MSG_TYPE_CTRL_SEND_POOL, (tx_pool, tx_forward))
 
 class HarmonySimulator:
-    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True, compress=None, pmatch=False, overhead=None, save_path=None):
+    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True, compress=None, pmatch=False, overhead=None, save_path=None, debug=False):
         self.tx_per_block = tx_per_block
         self.block_interval = block_interval
         self.n_blocks = n_blocks
@@ -716,6 +729,7 @@ class HarmonySimulator:
         self.pmatch = pmatch
         self.overhead = overhead
         self.save_path = save_path
+        self.debug = debug
 
         self.is_closed = True
     
@@ -745,11 +759,11 @@ class HarmonySimulator:
         self.network = NetworkSimulator(self.shard_ids)
         
         shard_simulator = ShardSimulator(0, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
-                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=self.overhead, save_path=self.save_path)
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=self.overhead, save_path=self.save_path, debug=self.debug)
         self.shards = [shard_simulator]
         for idx in self.shard_ids[1:]:
             shard_simulator = ShardSimulator(idx, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
-                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=None, save_path=self.save_path)
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=None, save_path=self.save_path, debug=self.debug)
             self.shards.append(shard_simulator)
         for s in self.shards: s.start()
         self.is_closed = False
@@ -797,17 +811,29 @@ class HarmonySimulator:
         # Note: all shards perform allocation algorithm in the paper so allocation table do not need to be broadcast. We only execute allocation algorithm in one shard here for fast simulation on single machine thus we broadcast the result table.
 
         # Allocation & Transition, client is shutdown during this period
+        if self.overhead is not None:
+            self.overhead.timer_start('ctrl_allocation_walltime', time.time())
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_ALLOCATION, action)
         self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
+        if self.overhead is not None:
+            self.overhead.timer_stop('ctrl_allocation_walltime', time.time())
+            self.overhead.timer_start('client_allocation_walltime', time.time())
         if self.shard_allocation:
             self.network.query(0, Protocol.MSG_TYPE_QUERY_ACTION)
             idx, msg_type, action = self.network.get_reply()
         self.allocate.apply(action)
+        if self.overhead is not None:
+            self.overhead.timer_stop('client_allocation_walltime', time.time())
+            self.overhead.timer_start('state_transition_walltime', time.time())
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_TRANSITION)
         self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
+        if self.overhead is not None:
+            self.overhead.timer_stop('state_transition_walltime', time.time())
         # self.simulate_time += self.block_interval # add idle time, do not need. Because in the paper, transaction processing are not shutdown during allocation phase which introduce no idle time.
 
         # start simulation
+        if self.overhead is not None:
+            self.overhead.timer_start('block_walltime', time.time())
         for _ in range(self.n_blocks):
             slot_txs = self.client.next(time_interval=self.block_interval)
             timestamp = self.simulate_time
@@ -822,6 +848,8 @@ class HarmonySimulator:
             self.network.join(Protocol.MSG_TYPE_CTRL_REPLY)
             self.simulate_time += self.block_interval
             self.block_height += 1
+        if self.overhead is not None:
+            self.overhead.timer_stop('block_walltime', time.time())
         self.n_epochs += 1
         return self.client.done(time_interval=self.epoch_time)
 
@@ -933,9 +961,14 @@ class HarmonySimulator:
         if self.overhead is not None:
             overhead_path = os.path.join(self.save_path,f'0_overhead.txt')
             with open(overhead_path, 'r') as f:
-                self.overhead.costs = json.load(f)
+                costs = json.load(f)
+                # update overhead
+                for cost_name, cost_value in costs.items():
+                    if cost_name in self.overhead.costs and len(self.overhead.costs[cost_name]) > 0:
+                        raise ValueError(cost_name, self.overhead.costs[cost_name])
+                    self.overhead.costs[cost_name] = cost_value
             for cost_name, cost_value in self.overhead.costs.items():
                 result[f'{cost_name}_cost'] = cost_value
                 if isinstance(cost_value, Iterable):
-                    result[f'{cost_name}_total_cost'] = sum(cost_value)
+                    result[f'{cost_name}_total_cost'] = float(np.sum(cost_value))
         return result

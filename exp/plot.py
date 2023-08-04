@@ -141,3 +141,26 @@ class RecordPloter:
         records = self.get_records(filter)
         delay_dict = self._prepare_data(records, 'tx_delay', params=self.params)
         self._plot_bar(delay_dict, params=self.params)
+
+import re
+
+class LogPloter:
+    def __init__(self, log_file):
+        self.log_file = log_file
+    
+    def plot_new_accounts(self, step_size=10000):
+        with open(self.log_file, 'r') as f:
+            for last_line in f:
+                pass
+            values = last_line.split('---')[-1]
+        result = re.findall("\[[^\]]*\]", values)
+        total_v_str = result[0].removeprefix('[').removesuffix(']')
+        new_v_str = result[1].removeprefix('[').removesuffix(']')
+        total_v = [int(v) for v in total_v_str.split(',')]
+        new_v = [int(v) for v in new_v_str.split(',')]
+        x_value = range(0,len(total_v)*step_size, step_size)
+        plt.figure()
+        plt.plot(x_value, total_v, label='Total')
+        plt.plot(x_value, new_v, label='New')
+        plt.legend()
+        plt.show()

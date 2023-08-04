@@ -5,6 +5,7 @@ import tqdm
 
 from .graph import Graph
 
+
 def spm_col_max(spm):
     csc = spm.tocsc()
     cmax = np.zeros(shape=csc.shape[1])
@@ -28,6 +29,7 @@ class GraphStack:
         if block_txs is None:
             vertex_idx = pd.Index([],dtype=object)
             self.size = 0
+            self.vertexes = []
         else:
             blocks = block_txs['block'].unique()
             self.size = len(blocks)
@@ -38,6 +40,7 @@ class GraphStack:
             if debug:
                 print('Vertex from:', len(vertex_idx_from), 'Vertex to:', len(vertex_idx_to))
             vertex_idx = vertex_idx_from.union(vertex_idx_to)
+            self.vertexes = [vertex_idx.values]
         self.vertex_idx = vertex_idx
         self.n_vertex = len(self.vertex_idx)
         if debug:
@@ -45,6 +48,7 @@ class GraphStack:
         self.n_edge = 0
         self.nexts = dict()
         self.weights = dict()
+        
         if self.size>0:
             self.new_edges = [[] for _ in range(self.size)]
             self.new_vertexes = [[] for _ in range(self.size)]
@@ -149,6 +153,7 @@ class GraphStack:
         vertex_idx_from = pd.Index(block_txs['from'].unique())
         vertex_idx_to = pd.Index(block_txs['to'].unique())
         vertex_idx = vertex_idx_from.union(vertex_idx_to)
+        self.vertexes.append(vertex_idx.values)
         new_vertex_idx = vertex_idx.difference(self.vertex_idx)
         if debug:
             print('Vertex from:', len(vertex_idx_from), 'Vertex to:', len(vertex_idx_to))
