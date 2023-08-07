@@ -138,6 +138,8 @@ class GraphStack:
         weight_layer_min = spm_col_min(self.weight_matrix)
         new_weight_layer_min = spm_col_min(new_weight_matrix)
         print('weights min:', weight_layer_min, 'new weights min:', new_weight_layer_min)
+        print('layer vweight dist:', np.quantile(self.vweight_matrix[:,self.size-1].toarray(), np.arange(0,1.01,0.01)))
+        print('layer weight dist:', np.quantile(self.weight_matrix[:,self.size-1].toarray(), np.arange(0,1.01,0.01)))
     
     def dequeue(self, n_blocks=1, debug=False):
         #TODO: delete n_blocks layers from stack bottom
