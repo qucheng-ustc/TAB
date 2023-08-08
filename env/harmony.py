@@ -636,6 +636,8 @@ class ShardSimulator(mp.Process):
                 case Protocol.MSG_TYPE_SHARD_FORWARD_TX:
                     tx_forward.append(content)
                 case Protocol.MSG_TYPE_CTRL_ALLOCATION if shard_allocation:
+                    if self.debug:
+                        print(f"{idx}:ctrl_allocation(shard)")
                     # construct local graph and send to shard 0
                     local_graph.prepare()
                     if self.compress is not None:
@@ -651,6 +653,8 @@ class ShardSimulator(mp.Process):
                     else:
                         net.send(idx, 0, Protocol.MSG_TYPE_SHARD_GRAPH, local_graph)
                 case Protocol.MSG_TYPE_CTRL_ALLOCATION: # use external allocation method
+                    if self.debug:
+                        print(f"{idx}:ctrl_allocation(extern)")
                     if self.overhead is not None and content is not None:
                         n_trans = self.overhead.state_transition_cost(allocate=allocate, new_table=content)
                         self.overhead.state_size_cost(n_shards=n_shards, n_trans=n_trans)
@@ -659,6 +663,8 @@ class ShardSimulator(mp.Process):
                         self.overhead.allocation_table_cost(allocate)
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_SHARD_GRAPH if idx == 0:
+                    if self.debug:
+                        print(f"{idx}:from={from_idx}:shard_graph")
                     local_graphs[from_idx] = content
                     if len(local_graphs)>=n_shards:
                         if self.overhead is not None:
@@ -677,12 +683,16 @@ class ShardSimulator(mp.Process):
                 case Protocol.MSG_TYPE_QUERY_COST:
                     net.report(idx, Protocol.MSG_TYPE_QUERY_COST_REPLY, self.overhead)
                 case Protocol.MSG_TYPE_SHARD_ALLOCATION:
+                    if self.debug:
+                        print(f"{idx}:shard_allocation")
                     local_graph = LocalGraph() # reset local graph
                     allocate.apply(content)
                     if idx == 0 and self.overhead is not None:
                         self.overhead.allocation_table_cost(allocate)
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPLY, msg_type)
                 case Protocol.MSG_TYPE_CTRL_TRANSITION:
+                    if self.debug:
+                        print(f"{idx}:ctrl_transition")
                     # re-allocate tx pool
                     new_tx_pool = deque()
                     new_tx_forward = deque()
