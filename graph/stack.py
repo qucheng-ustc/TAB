@@ -24,6 +24,34 @@ def spm_col_min(spm):
             cmin[i] = np.min(data)
     return cmin
 
+def spm_dist(spm):
+    row_ind, col_ind, data = find(spm)
+    sort_data = np.sort(data)
+    sum_data = np.cumsum(sort_data)
+    total_sum = sum_data[-1]
+    dist_dict = {}
+    n = len(data)
+    for p in np.arange(0, 1.01, 0.01):
+        i = int((n-1)*p)
+        dist_dict[p] = (i, sort_data[i], sum_data[i]/total_sum)
+    return dist_dict
+
+def spm_sim(spm1, spm2):
+    row_ind1, col_ind1, data1 = find(spm1)
+    row_ind2, col_ind2, data2 = find(spm2)
+    n1 = len(data1)
+    n2 = len(data2)
+    d1 = {row_ind1[i]:data1[i] for i in range(n1)}
+    d2 = {row_ind2[i]:data2[i] for i in range(n2)}
+    same_d1 = {}
+    same_d2 = {}
+    for r in d1:
+        if r not in d2:
+            continue
+        same_d1[r] = d1[r]
+        same_d2[r] = d2[r]
+    return same_d1, same_d2
+
 class GraphStack:
     def __init__(self, block_txs=None, combine=False, debug=False):
         if block_txs is None:
@@ -107,7 +135,9 @@ class GraphStack:
         if debug:
             self.debug_info()
     
-    def debug_info(self):
+    def debug_info(self, log=None):
+        if log is not None:
+            print = log.print
         new_vertex_num = [len(v) for v in self.new_vertexes]
         print('Vertex:', self.n_vertex, ', new vertexes:', new_vertex_num)
         new_edge_num = [len(e) for e in self.new_edges]
@@ -138,8 +168,34 @@ class GraphStack:
         weight_layer_min = spm_col_min(self.weight_matrix)
         new_weight_layer_min = spm_col_min(new_weight_matrix)
         print('weights min:', weight_layer_min, 'new weights min:', new_weight_layer_min)
-        print('layer vweight dist:', np.quantile(self.vweight_matrix[:,self.size-1].toarray(), np.arange(0,1.01,0.01)))
-        print('layer weight dist:', np.quantile(self.weight_matrix[:,self.size-1].toarray(), np.arange(0,1.01,0.01)))
+        print('layer vweight dist:', spm_dist(self.vweight_matrix[:,self.size-1]))
+        print('layer weight dist:', spm_dist(self.weight_matrix[:,self.size-1]))
+        if self.size>1:
+            last_layer_weight = self.weight_matrix[:,self.size-2]
+            cur_layer_weight = self.weight_matrix[:,self.size-1]
+            same_weight1, same_weight2 = spm_sim(last_layer_weight, cur_layer_weight)
+            n_last = last_layer_weight.getnnz()
+            n_cur = cur_layer_weight.getnnz()
+            n_same = len(same_weight1)
+            print('layer weight sim:', n_last, n_cur, n_same, n_same/n_last, n_same/n_cur)
+            sum_last = last_layer_weight.sum()
+            sum_cur = cur_layer_weight.sum()
+            sum_same_last = sum(same_weight1.values())
+            sum_same_cur = sum(same_weight2.values())
+            print('layer weight sum:', sum_last, sum_cur, sum_same_last, sum_same_cur, sum_same_last/sum_last, sum_same_cur/sum_cur)
+
+            last_layer_vweight = self.vweight_matrix[:,self.size-2]
+            cur_layer_vweight = self.vweight_matrix[:,self.size-1]
+            same_vweight1, same_vweight2 = spm_sim(last_layer_vweight, cur_layer_vweight)
+            n_last = last_layer_vweight.getnnz()
+            n_cur = cur_layer_vweight.getnnz()
+            n_same = len(same_vweight1)
+            print('layer vweight sim:', n_last, n_cur, n_same, n_same/n_last, n_same/n_cur)
+            sum_last = last_layer_vweight.sum()
+            sum_cur = cur_layer_vweight.sum()
+            sum_same_last = sum(same_vweight1.values())
+            sum_same_cur = sum(same_vweight2.values())
+            print('layer vweight sum:', sum_last, sum_cur, sum_same_last, sum_same_cur, sum_same_last/sum_last, sum_same_cur/sum_cur)
     
     def dequeue(self, n_blocks=1, debug=False):
         #TODO: delete n_blocks layers from stack bottom

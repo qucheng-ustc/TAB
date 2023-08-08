@@ -10,20 +10,31 @@ python test_harmony.py --method=pending --k=${K} --tx_rate=${TX_RATE} --tx_per_b
 export K=$1
 export TX_RATE=$2
 export N_EPOCHS=10
-export COMPRESS="1 5 5"
 export OVERHEAD=--overhead
+export COMPRESS="1 1 1"
 
 export START_TIME="2021-02-01 00:00:00"
 export END_TIME="2021-04-01 00:00:00"
-
 run_exp
 
 export START_TIME="2021-04-01 00:00:00"
 export END_TIME="2021-06-01 00:00:00"
-
 run_exp
 
 export START_TIME="2021-06-01 00:00:00"
 export END_TIME="2021-08-01 00:00:00"
+run_exp
 
+export COMPRESS="1 5 5"
+
+export START_TIME="2021-02-01 00:00:00"
+export END_TIME="2021-04-01 00:00:00"
+run_exp
+
+export START_TIME="2021-04-01 00:00:00"
+export END_TIME="2021-06-01 00:00:00"
+run_exp
+
+export START_TIME="2021-06-01 00:00:00"
+export END_TIME="2021-08-01 00:00:00"
 run_exp

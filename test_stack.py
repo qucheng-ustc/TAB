@@ -55,7 +55,8 @@ def test_stack_update(txs, step_size, debug=False):
         print('Block number:', min(blockNumber), max(blockNumber), max(blockNumber)-min(blockNumber))
         block_txs = pd.DataFrame({'block':np.repeat(step, len(stxs)), 'from':tx_from, 'to':tx_to})
         hgraph.update(block_txs, debug=debug)
-        log.print(len(hgraph.vertexes), ': Vertex:', [len(v) for v in hgraph.vertexes], " New:", [len(v) for v in hgraph.new_vertexes])
+        v_sets = [set()]+[set(v) for v in hgraph.vertexes]
+        log.print(len(hgraph.vertexes), ': Vertex:', [len(v) for v in hgraph.vertexes], " New:", [len(v) for v in hgraph.new_vertexes], "New-1:", [len(v_sets[i]-v_sets[i-1]) for i in range(1,len(v_sets))])
 
 if __name__=='__main__':
     import argparse

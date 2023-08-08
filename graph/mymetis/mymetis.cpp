@@ -107,10 +107,15 @@ mymetis_partition(PyObject *self, PyObject *args, PyObject *kwargs)
     if (dbg_lvl>0){
         cout<<"Metis partition."<<endl;
         cout<<"nvtxs:"<<nvtxs<<",nadj:"<<nadj<<endl;
+        cout<<"xadj:"<<endl;
         print_idx_array(xadj, nvtxs+1);
+        cout<<"adjncy:"<<endl;
         print_idx_array(adjncy, nadj);
+        cout<<"vwgt:"<<endl;
         print_idx_array(vwgt, nvtxs);
+        cout<<"adjwgt:"<<endl;
         print_idx_array(adjwgt, nadj);
+        cout<<"tpwgts:"<<endl;
         print_real_array(tpwgts, nparts);
     }
 
@@ -130,6 +135,7 @@ mymetis_partition(PyObject *self, PyObject *args, PyObject *kwargs)
     if (dbg_lvl>0){
         cout<<"Status:"<<status<<endl;
         cout<<"Object:"<<objval<<endl;
+        cout<<"Partitions:"<<endl;
         print_idx_array(part, nvtxs);
     }
 

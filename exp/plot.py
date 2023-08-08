@@ -19,6 +19,7 @@ default_values = {
     "compress": None,
     "pmatch": False,
     "overhead": False,
+    'n_epochs': 10,
     "save_path": "/tmp/harmony"
 }
 
@@ -79,26 +80,31 @@ class RecordPloter:
                 records.append(record)
         return records
     
-    def _prepare_data(self, records, key, params):
-        methods = ['TAB-D','TAB','Transformers','Monoxide']
+    def _prepare_data(self, records, key, params, methods=['TAB-5,5','TAB-1,1','TAB-D','Transformers','Monoxide'], operation=None):
         data = {}
         for record in records:
             method = record.params['method']
             double_addr = record.params['double_addr']
             if method == 'shard':
                 if double_addr:
-                    mdata = data.setdefault('TAB-D', {})
+                    compress = record.params['compress']
+                    m = f'TAB-{compress[1]},{compress[2]}'
                 else:
-                    mdata = data.setdefault('TAB', {})
+                    m = 'TAB-D'
             elif method == 'none' and not double_addr:
-                mdata = data.setdefault('Monoxide', {})
+                m = 'Monoxide'
             elif method == 'pending' and not double_addr:
-                mdata = data.setdefault('Transformers', {})
+                m = 'Transformers'
             else:
                 continue
+            if m not in methods:
+                continue
+            mdata = data.setdefault(m, {})
             n_shards = record.params['n_shards']
             tx_rate = record.params['tx_rate']
             value = record.get('info')[key]
+            if operation is not None:
+                value = operation(value, record)
             mdata.setdefault(f"[{n_shards},{tx_rate}]",[]).append(value)
         data_dict = {}
         for i, method in enumerate(methods):
@@ -128,8 +134,7 @@ class RecordPloter:
     
     def plot_utility(self, filter=None):
         records = self.get_records(filter)
-        waste_dict = self._prepare_data(records, 'prop_wasted', params=self.params)
-        utility_dict = {k:[1.-i for i in v] for k,v in waste_dict.items()}
+        utility_dict = self._prepare_data(records, 'prop_wasted', params=self.params, operation=lambda x,_:1-x)
         self._plot_bar(utility_dict, params=self.params)
 
     def plot_actual_throughput(self, filter=None):
@@ -141,6 +146,11 @@ class RecordPloter:
         records = self.get_records(filter)
         delay_dict = self._prepare_data(records, 'tx_delay', params=self.params)
         self._plot_bar(delay_dict, params=self.params)
+    
+    def plot_avg_partition_time(self, filter=None):
+        records = self.get_records(filter)
+        time_dict = self._prepare_data(records, 'partition_time_cost', params=self.params, methods=['TAB-5,5','TAB-1,1','TAB-D','Transformers'], operation=lambda x,_:sum(x)/len(x))
+        self._plot_bar(time_dict, params=self.params)
 
 import re
 

@@ -7,7 +7,7 @@ import os
 import json
 import math
 import time
-import gc
+import traceback
 
 class Protocol:
     # stop simulation
@@ -308,9 +308,11 @@ class GlobalGraph:
                 adjwgt.append(weight)
                 i += 1
             xadj.append(i)
-        cut, parts = mymetis.partition(xadj=xadj, adjncy=adjncy, vwgt=vwgt, adjwgt=adjwgt, nparts=n)
         if debug:
-            print("---PARTITION--- Parts:", len(parts), "Cut:", cut)
+            print(f"---PARTITION START--- N Part={n}, n_xadj={len(xadj)}, n_adjncy={len(adjncy)}, n_adjwgt={len(adjwgt)}")
+        cut, parts = mymetis.partition(xadj=xadj, adjncy=adjncy, vwgt=vwgt, adjwgt=adjwgt, nparts=n, dbg_lvl=1 if debug else 0)
+        if debug:
+            print("---PARTITION END--- Parts:", len(parts), "Cut:", cut)
         if pmatch:
             import munkres
             matrix = np.zeros(shape=(n,n), dtype=int)
@@ -581,7 +583,7 @@ class ShardSimulator(mp.Process):
             overhead_path = os.path.join(self.save_path,f'{self.idx}_overhead.txt')
             self.overhead.save(overhead_path)
 
-    def run(self):
+    def _run(self):
         np.random.seed(0)
         idx = self.idx
         net = self.net
@@ -599,14 +601,19 @@ class ShardSimulator(mp.Process):
             from_idx, msg_type, content = net.recv(idx)
             match msg_type:
                 case Protocol.MSG_TYPE_CTRL_RESET:
+                    if self.debug:
+                        print(f'{idx}:ctrl_reset')
                     self.save_info(tx_pool, tx_forward)
                     self.block_file.close()
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPORT)
-                    return
                 case Protocol.MSG_TYPE_CTRL_INFO:
+                    if self.debug:
+                        print(f'{idx}:ctrl_info')
                     self.save_info(tx_pool, tx_forward)
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPORT)
                 case Protocol.MSG_TYPE_CTRL_BLOCK:
+                    # if self.debug:
+                    #     print(f'{idx}:ctrl_block')
                     # each shard produce one block
                     block_height = self.block_height
                     block_txs = []
@@ -703,6 +710,13 @@ class ShardSimulator(mp.Process):
                 case Protocol.MSG_TYPE_CTRL_SYNC_POOL:
                     net.report(idx, Protocol.MSG_TYPE_CTRL_SEND_POOL, (tx_pool, tx_forward))
 
+    def run(self):
+        try:
+            self._run()
+        except:
+            print("Error: shard simulator failed.")
+            traceback.print_exc()
+
 class HarmonySimulator:
     def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True, compress=None, pmatch=False, overhead=None, save_path=None, debug=False):
         self.tx_per_block = tx_per_block
@@ -736,11 +750,6 @@ class HarmonySimulator:
     def close(self):
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_RESET)
         self.network.join(Protocol.MSG_TYPE_CTRL_REPORT)
-        for s in self.shards:
-            s.terminate()
-            s.join()
-            s.close()
-        self.network.close()
         self.is_closed = True
 
     def reset(self, ptx=0):
@@ -759,11 +768,11 @@ class HarmonySimulator:
         self.network = NetworkSimulator(self.shard_ids)
         
         shard_simulator = ShardSimulator(0, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
-                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=self.overhead, save_path=self.save_path, debug=self.debug)
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=self.overhead, save_path=self.save_path, debug=self.debug, daemon=True)
         self.shards = [shard_simulator]
         for idx in self.shard_ids[1:]:
             shard_simulator = ShardSimulator(idx, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
-                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=None, save_path=self.save_path, debug=self.debug)
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=None, save_path=self.save_path, debug=self.debug, daemon=True)
             self.shards.append(shard_simulator)
         for s in self.shards: s.start()
         self.is_closed = False
