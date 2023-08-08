@@ -8,6 +8,8 @@ import json
 import math
 import time
 import traceback
+import tqdm
+import gc
 
 class Protocol:
     # stop simulation
@@ -497,35 +499,36 @@ class Overhead:
 
 class NetworkSimulator:
     # simple full connected network without bandwith limit
-    def __init__(self, nodes:list, delay:float=0.):
+    def __init__(self, nodes:list, delay:float=0., timeout=600):
         # network delay is not implemented, we assume all messages can arrive in one block interval
         self.n_nodes = len(nodes)
         self.nodes = nodes
         self.queues = {idx:mp.Queue() for idx in nodes} # for msg exchange between nodes
         self.report_queue = mp.Queue() # for reporting shard info to main simulator
         self.closed = False
+        self.timeout = timeout
 
     def send(self, idx, to_idx, msg_type, content=None):
-        self.queues[to_idx].put((idx, msg_type, content))
+        self.queues[to_idx].put((idx, msg_type, content), timeout=self.timeout)
     
     def broadcast(self, idx, msg_type, content=None):
         for queue in self.queues.values():
-            queue.put((idx, msg_type, content))
+            queue.put((idx, msg_type, content), timeout=self.timeout)
 
     def recv(self, idx):
-        return self.queues[idx].get()
+        return self.queues[idx].get(timeout=self.timeout)
     
     def ctrl(self, msg_type, content=None):
         self.broadcast(-1, msg_type=msg_type, content=content)
 
     def report(self, idx, msg_type, content=None):
-        self.report_queue.put((idx, msg_type, content))
+        self.report_queue.put((idx, msg_type, content), timeout=self.timeout)
     
     def query(self, idx, msg_type, content=None):
         self.send(-1, idx, msg_type, content)
 
     def get_reply(self):
-        return self.report_queue.get()
+        return self.report_queue.get(timeout=self.timeout)
     
     def join(self, msg_type=None):
         reply = dict()
@@ -606,6 +609,7 @@ class ShardSimulator(mp.Process):
                     self.save_info(tx_pool, tx_forward)
                     self.block_file.close()
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPORT)
+                    time.sleep(3600) # just sleep, wait main process to terminate
                 case Protocol.MSG_TYPE_CTRL_INFO:
                     if self.debug:
                         print(f'{idx}:ctrl_info')
@@ -678,6 +682,7 @@ class ShardSimulator(mp.Process):
                             self.overhead.state_size_cost(n_shards=n_shards, n_trans=n_trans)
                         local_graphs = {}
                         net.broadcast(idx, Protocol.MSG_TYPE_SHARD_ALLOCATION, account_table)
+                        # gc.collect()
                 case Protocol.MSG_TYPE_QUERY_ACTION:
                     net.report(idx, Protocol.MSG_TYPE_QUERY_ACTION_REPLY, account_table) # report latest allocation action to client
                 case Protocol.MSG_TYPE_QUERY_COST:
@@ -718,6 +723,8 @@ class ShardSimulator(mp.Process):
                 case Protocol.MSG_TYPE_SHARD_TX | Protocol.MSG_TYPE_CLIENT_TX:
                     tx_pool.append(content)
                 case Protocol.MSG_TYPE_CTRL_SYNC_POOL:
+                    if self.debug:
+                        print(f"{idx}:ctrl_sync_pool")
                     net.report(idx, Protocol.MSG_TYPE_CTRL_SEND_POOL, (tx_pool, tx_forward))
 
     def run(self):
@@ -728,7 +735,7 @@ class ShardSimulator(mp.Process):
             traceback.print_exc()
 
 class HarmonySimulator:
-    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True, compress=None, pmatch=False, overhead=None, save_path=None, debug=False):
+    def __init__(self, client, allocate, n_shards, tx_per_block=200, block_interval=15, n_blocks=10, shard_allocation=True, compress=None, pmatch=False, overhead=None, save_path=None, timeout=None, debug=False):
         self.tx_per_block = tx_per_block
         self.block_interval = block_interval
         self.n_blocks = n_blocks
@@ -753,6 +760,7 @@ class HarmonySimulator:
         self.pmatch = pmatch
         self.overhead = overhead
         self.save_path = save_path
+        self.timeout = timeout
         self.debug = debug
 
         self.is_closed = True
@@ -775,7 +783,7 @@ class HarmonySimulator:
         if self.network is not None and not self.network.closed:
             self.close()
         self.shard_ids = list(range(self.n_shards))
-        self.network = NetworkSimulator(self.shard_ids)
+        self.network = NetworkSimulator(self.shard_ids, timeout=self.timeout)
         
         shard_simulator = ShardSimulator(0, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
                            n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=self.overhead, save_path=self.save_path, debug=self.debug, daemon=True)
@@ -853,7 +861,7 @@ class HarmonySimulator:
         # start simulation
         if self.overhead is not None:
             self.overhead.timer_start('block_walltime', time.time())
-        for _ in range(self.n_blocks):
+        for _ in tqdm.tqdm(range(self.n_blocks), desc="Block") if self.debug else range(self.n_blocks):
             slot_txs = self.client.next(time_interval=self.block_interval)
             timestamp = self.simulate_time
             for from_addr, to_addr, *_ in slot_txs:

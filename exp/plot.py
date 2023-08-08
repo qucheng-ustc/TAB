@@ -157,20 +157,28 @@ import re
 class LogPloter:
     def __init__(self, log_file):
         self.log_file = log_file
+
+    def _get_list_data(self, list_str, key):
+        v_str = list_str.removeprefix('[').removesuffix(']')
+        v = [int(v) for v in v_str.split(',')]
+        v = v[key]
+        return v
     
-    def plot_new_accounts(self, step_size=10000):
+    def plot_new_accounts(self, step_size=10000, key=slice(None,None,None)):
         with open(self.log_file, 'r') as f:
             for last_line in f:
                 pass
             values = last_line.split('---')[-1]
         result = re.findall("\[[^\]]*\]", values)
-        total_v_str = result[0].removeprefix('[').removesuffix(']')
-        new_v_str = result[1].removeprefix('[').removesuffix(']')
-        total_v = [int(v) for v in total_v_str.split(',')]
-        new_v = [int(v) for v in new_v_str.split(',')]
-        x_value = range(0,len(total_v)*step_size, step_size)
+        total_v = self._get_list_data(result[0], key=key)
+        new_v = self._get_list_data(result[1], key=key)
+        x_value = list(range(0,len(total_v)))
         plt.figure()
         plt.plot(x_value, total_v, label='Total')
         plt.plot(x_value, new_v, label='New')
+        if len(result)>2:
+            new1_v = self._get_list_data(result[2], key=key)
+            plt.plot(x_value, new1_v, label='New-1')
+        plt.ylim(bottom=0)
         plt.legend()
         plt.show()

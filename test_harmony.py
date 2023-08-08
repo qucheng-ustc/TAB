@@ -28,7 +28,7 @@ def test_harmony(txs, method='last', args=None):
         overhead = Overhead()
     
     simulator_args = dict(client=None, allocate=static_allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval, shard_allocation=False, 
-                          pmatch=args.pmatch, compress=args.compress, overhead=overhead, save_path=args.save_path, debug=args.debug)
+                          pmatch=args.pmatch, compress=args.compress, overhead=overhead, save_path=args.save_path, timeout=args.timeout, debug=args.debug)
 
     def get_client():
         if args.double_addr is True:
@@ -113,7 +113,8 @@ if __name__=='__main__':
     loader = get_default_dataloader()
     txs = loader.load_data(start_time=args.start_time, end_time=args.end_time, columns=['from','to'], dropna=True)
 
-    args.debug = True
+    args.debug = False
+    args.timeout = 600
 
     info = test_harmony(txs, method=args.method, args=args)
     recorder.add("info", info)

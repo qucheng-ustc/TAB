@@ -94,15 +94,15 @@ mymetis_partition(PyObject *self, PyObject *args, PyObject *kwargs)
     part = new idx_t[nvtxs];
 
     if (long_list_to_array(xadj_list, xadj)<0) return NULL;
-    Py_XDECREF(xadj_list);
+    //Py_XDECREF(xadj_list);
     if (long_list_to_array(adjncy_list, adjncy)<0) return NULL;
-    Py_XDECREF(adjncy_list);
+    //Py_XDECREF(adjncy_list);
     if (long_list_to_array(vwgt_list, vwgt)<0) return NULL;
-    Py_XDECREF(vwgt_list);
+    //Py_XDECREF(vwgt_list);
     if (long_list_to_array(adjwgt_list, adjwgt)<0) return NULL;
-    Py_XDECREF(adjwgt_list);
+    //Py_XDECREF(adjwgt_list);
     if (real_list_to_array(tpwgts_list, tpwgts)<0) return NULL;
-    Py_XDECREF(tpwgts_list);
+    //Py_XDECREF(tpwgts_list);
 
     if (dbg_lvl>0){
         cout<<"Metis partition."<<endl;
@@ -154,7 +154,7 @@ mymetis_partition(PyObject *self, PyObject *args, PyObject *kwargs)
     }
     PyObject *result;
     result = Py_BuildValue("(iO)", objval_int, part_list);
-    Py_DECREF(part_list);
+    //Py_DECREF(part_list);
     if (xadj!=NULL) delete[] xadj;
     if (adjncy!=NULL) delete[] adjncy;
     if (vwgt!=NULL) delete[] vwgt;
