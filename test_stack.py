@@ -48,19 +48,35 @@ def test_stack_pred(txs, window, step_size):
 def test_stack_update(txs, step_size, debug=False):
     print('Test stack update:')
     hgraph = GraphStack()
-    for step in range(0, len(txs), step_size):
-        print('Step:', step)
+    ntx = len(txs)
+    for step in range(0, ntx, step_size):
+        print('Step:', step, "/", ntx)
         stxs = txs.next(min(step_size,len(txs)-step))
         blockNumber, tx_from, tx_to = tuple(zip(*stxs))
         print('Block number:', min(blockNumber), max(blockNumber), max(blockNumber)-min(blockNumber))
         block_txs = pd.DataFrame({'block':np.repeat(step, len(stxs)), 'from':tx_from, 'to':tx_to})
         hgraph.update(block_txs, debug=debug)
-        v_sets = [set()]+[set(v) for v in hgraph.vertexes]
-        v2_sets = [set()]+[v_sets[i-1]+v_sets[i] for i in range(1,len(v_sets))]
-        v3_sets = [set()]+[v2_sets[i-1]+v_sets[i] for i in range(1,len(v_sets))]
-        log.print(len(hgraph.vertexes), ': Vertex:', [len(v) for v in hgraph.vertexes], " New:", [len(v) for v in hgraph.new_vertexes],
-                  "New-1:", [len(v_sets[i]-v_sets[i-1]) for i in range(1,len(v_sets))], "New-2:", [len(v_sets[i]-v2_sets[i-1]) for i in range(1,len(v_sets))],
-                  "New-3:", [len(v_sets[i]-v2_sets[i-1]) for i in range(1,len(v_sets))])
+    v_sets_list = []
+    v_sets = [set()]+[set(v) for v in hgraph.vertexes]
+    v_sets_list.append(v_sets)
+    for l in range(1,10):
+        vlp_sets = v_sets_list[l-1]
+        vl_sets = [set()]+[vlp_sets[i-1]|v_sets[i] for i in range(1,len(v_sets))]
+        v_sets_list.append(vl_sets)
+    pstr = f"{len(hgraph.vertexes)}: Vertex:{[len(v) for v in hgraph.vertexes]} NewV:{[len(v) for v in hgraph.new_vertexes]}"
+    for l in range(0,10):
+        pstr += f" TotalV-{l+1}:{[len(v_sets_list[l][i]) for i in range(1,len(v_sets))]}" + f" NewV-{l+1}:{[len(v_sets[i]-v_sets_list[l][i-1]) for i in range(1,len(v_sets))]}"
+    e_sets_list = []
+    e_sets = [set()]+[set(e) for e in hgraph.edges]
+    e_sets_list.append(e_sets)
+    for l in range(1,10):
+        elp_sets = e_sets_list[l-1]
+        el_sets = [set()]+[elp_sets[i-1]|e_sets[i] for i in range(1,len(e_sets))]
+        e_sets_list.append(el_sets)
+    pstr += f"{len(hgraph.edges)}: Edge:{[len(e) for e in hgraph.edges]} NewE:{[len(e) for e in hgraph.new_edges]}"
+    for l in range(0,10):
+        pstr += f" TotalE-{l+1}:{[len(e_sets_list[l][i]) for i in range(1,len(e_sets))]}" + f" NewE-{l+1}:{[len(e_sets[i]-e_sets_list[l][i-1]) for i in range(1,len(e_sets))]}"
+    log.print(pstr)
 
 if __name__=='__main__':
     import argparse

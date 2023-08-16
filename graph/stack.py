@@ -58,6 +58,7 @@ class GraphStack:
             vertex_idx = pd.Index([],dtype=object)
             self.size = 0
             self.vertexes = []
+            self.edges = []
         else:
             blocks = block_txs['block'].unique()
             self.size = len(blocks)
@@ -69,6 +70,7 @@ class GraphStack:
                 print('Vertex from:', len(vertex_idx_from), 'Vertex to:', len(vertex_idx_to))
             vertex_idx = vertex_idx_from.union(vertex_idx_to)
             self.vertexes = [vertex_idx.values]
+            self.edges = [set()]
         self.vertex_idx = vertex_idx
         self.n_vertex = len(self.vertex_idx)
         if debug:
@@ -101,7 +103,8 @@ class GraphStack:
                     v_from, v_to = v_to, v_from
                 if (v_from, v_to) in self.weights:
                     continue
-                self.weights[(v_from,v_to)] = len(self.weights)
+                edge_idx = len(self.weights)
+                self.weights[(v_from,v_to)] = edge_idx
                 if v_from in self.nexts:
                     self.nexts[v_from].append(v_to)
                 else:
@@ -113,7 +116,8 @@ class GraphStack:
                     self.nexts[v_to] = [v_from]
                     self.new_vertexes[layer].append(v_to)
                 self.n_edge += 1
-                self.new_edges[layer].append(self.weights[(v_from,v_to)])
+                self.new_edges[layer].append(edge_idx)
+                self.edges[0].add(edge_idx)
         self.weight_index = pd.Index(list(self.weights.keys()))
         self.weight_matrix = lil_matrix((len(self.weights), self.size), dtype=int)
         self.vweight_matrix = lil_matrix((self.n_vertex, self.size), dtype=int)
@@ -138,6 +142,9 @@ class GraphStack:
     def debug_info(self, log=None):
         if log is not None:
             print = log.print
+        else:
+            import builtins
+            print = builtins.print
         new_vertex_num = [len(v) for v in self.new_vertexes]
         print('Vertex:', self.n_vertex, ', new vertexes:', new_vertex_num)
         new_edge_num = [len(e) for e in self.new_edges]
@@ -212,6 +219,7 @@ class GraphStack:
         vertex_idx_to = pd.Index(block_txs['to'].unique())
         vertex_idx = vertex_idx_from.union(vertex_idx_to)
         self.vertexes.append(vertex_idx.values)
+        self.edges.append(set())
         new_vertex_idx = vertex_idx.difference(self.vertex_idx)
         if debug:
             print('Vertex from:', len(vertex_idx_from), 'Vertex to:', len(vertex_idx_to))
@@ -232,8 +240,12 @@ class GraphStack:
                 if v_from > v_to:
                     v_from, v_to = v_to, v_from
                 if (v_from, v_to) in self.weights:
+                    edge_idx = self.weights[(v_from, v_to)]
+                    if edge_idx not in self.edges[-1]:
+                        self.edges[-1].add(edge_idx)
                     continue
-                self.weights[(v_from,v_to)] = len(self.weights)
+                edge_idx = len(self.weights)
+                self.weights[(v_from,v_to)] = edge_idx
                 if v_from in self.nexts:
                     self.nexts[v_from].append(v_to)
                 else:
@@ -245,7 +257,8 @@ class GraphStack:
                     self.nexts[v_to] = [v_from]
                     self.new_vertexes[layer].append(v_to)
                 self.n_edge += 1
-                self.new_edges[layer].append(self.weights[(v_from,v_to)])
+                self.new_edges[layer].append(edge_idx)
+                self.edges[-1].add(edge_idx)
         self.weight_index = pd.Index(list(self.weights.keys()))
         self.weight_matrix.resize((len(self.weights), self.size))
         self.vweight_matrix.resize((self.n_vertex, self.size))

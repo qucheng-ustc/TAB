@@ -609,7 +609,7 @@ class ShardSimulator(mp.Process):
                     self.save_info(tx_pool, tx_forward)
                     self.block_file.close()
                     net.report(idx, Protocol.MSG_TYPE_CTRL_REPORT)
-                    time.sleep(3600) # just sleep, wait main process to terminate
+                    return
                 case Protocol.MSG_TYPE_CTRL_INFO:
                     if self.debug:
                         print(f'{idx}:ctrl_info')
@@ -731,7 +731,7 @@ class ShardSimulator(mp.Process):
         try:
             self._run()
         except:
-            print("Error: shard simulator failed.")
+            print(f"Error: shard simulator {self.idx} failed.")
             traceback.print_exc()
 
 class HarmonySimulator:
@@ -768,6 +768,9 @@ class HarmonySimulator:
     def close(self):
         self.network.ctrl(Protocol.MSG_TYPE_CTRL_RESET)
         self.network.join(Protocol.MSG_TYPE_CTRL_REPORT)
+        for s in self.shards:
+            s.terminate()
+            s.join(60)
         self.is_closed = True
 
     def reset(self, ptx=0):
@@ -786,11 +789,11 @@ class HarmonySimulator:
         self.network = NetworkSimulator(self.shard_ids, timeout=self.timeout)
         
         shard_simulator = ShardSimulator(0, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
-                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=self.overhead, save_path=self.save_path, debug=self.debug, daemon=True)
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=self.overhead, save_path=self.save_path, debug=self.debug, daemon=False)
         self.shards = [shard_simulator]
         for idx in self.shard_ids[1:]:
             shard_simulator = ShardSimulator(idx, net=self.network, allocate=self.allocate, tx_per_block=self.tx_per_block, n_blocks=self.n_blocks, 
-                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=None, save_path=self.save_path, debug=self.debug, daemon=True)
+                           n_shards=self.n_shards, shard_allocation=self.shard_allocation, compress=self.compress, pmatch=self.pmatch, overhead=None, save_path=self.save_path, debug=self.debug, daemon=False)
             self.shards.append(shard_simulator)
         for s in self.shards: s.start()
         self.is_closed = False
@@ -830,7 +833,7 @@ class HarmonySimulator:
                     txs.append((shard, from_addr, to_addr))
         return pd.DataFrame(txs, columns=['shard', 'from', 'to'])
 
-    def step(self, action):
+    def _step(self, action):
         # 1. Allocation: Shard #0 collects account graph from other shard, construct whole graph and partition it, create an allocation block and broadcasts allocation block to all shards
         # 2. Transition: All shards apply the account allocation action and start state transition and forward pending txs in tx pool to destination shards, all shards produce state block after receive complete account states
         # 3. Block: All shards process transactions and produce blocks
@@ -879,6 +882,15 @@ class HarmonySimulator:
             self.overhead.timer_stop('block_walltime', time.time())
         self.n_epochs += 1
         return self.client.done(time_interval=self.epoch_time)
+    
+    def step(self, action):
+        try:
+            self._step(action)
+        except Exception as e:
+            print("Harmony simulator error")
+            for s in self.shards:
+                s.terminate()
+            raise e
 
     def info(self, start=0, end=None):
         if not self.is_closed:

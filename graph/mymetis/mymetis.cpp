@@ -153,7 +153,7 @@ mymetis_partition(PyObject *self, PyObject *args, PyObject *kwargs)
         PyList_SetItem(part_list, (Py_ssize_t)i, item);
     }
     PyObject *result;
-    result = Py_BuildValue("(iO)", objval_int, part_list);
+    result = Py_BuildValue("(iN)", objval_int, part_list);
     //Py_DECREF(part_list);
     if (xadj!=NULL) delete[] xadj;
     if (adjncy!=NULL) delete[] adjncy;
