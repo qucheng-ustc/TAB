@@ -9,7 +9,7 @@ from exp.log import get_logger
 
 from graph.stack import GraphStack
 
-log = get_logger(file_name="./logs/test_stack.log")
+log = get_logger(file_name="./logs/test_stack_weights.log")
 
 def test_stack_pred(txs, window, step_size):
     print('Real data:')

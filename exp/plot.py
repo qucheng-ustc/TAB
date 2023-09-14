@@ -5,20 +5,22 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import string
+from mpl_toolkits import mplot3d
 from exp.recorder import Recorder
 
 class Subplots:
-    def __init__(self, nrows=1, ncols=1, figsize=None):
+    def __init__(self, nrows=1, ncols=1, figsize=None, projection=None):
         self.nrows = nrows
         self.ncols = ncols
         if figsize is None:
             figsize = (7*ncols-2, 5*nrows)
-        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, squeeze=False, figsize=figsize)
+        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, squeeze=False, figsize=figsize, subplot_kw=dict(projection=projection))
         self.fig = fig
         self.axes = axes
     
     def subplot(self, row, col):
-        return self.axes[row][col]
+        ax = self.axes[row][col]
+        return ax
     
     def __getitem__(self, key):
         if isinstance(key, int):
@@ -26,18 +28,22 @@ class Subplots:
         if isinstance(key, tuple):
             return self.axes[key[0]][key[1]]
     
-    def show(self, save_path=None, wspace=0.5, hspace=0.):
+    def show(self, save_path=None, remove_title=True, titley=-0.2, adjust_kw={}, layout_kw={}, save_kw={}):
         if self.nrows * self.ncols > 1:
             ax_idx = string.ascii_lowercase
             i = -1
             for ax_line in self.axes:
                 for ax in ax_line:
                     i += 1
-                    ax.set_title(f'({ax_idx[i]}) '+ax.get_title(), y=-0.2)
-            self.fig.subplots_adjust(wspace=wspace, hspace=hspace)
-        self.fig.tight_layout()
+                    title = f'({ax_idx[i]})'
+                    if not remove_title:
+                        title += ' '+ax.get_title()
+                    ax.set_title(title, y=titley)
+            self.fig.subplots_adjust(**adjust_kw)
+        if layout_kw is not None:
+            self.fig.tight_layout(**layout_kw)
         if save_path is not None:
-            self.fig.savefig(save_path)
+            self.fig.savefig(save_path, **save_kw)
         self.fig.show()
 
 default_values = {
@@ -95,23 +101,27 @@ class Filter:
 
 default_filter = Filter({k:[v] for k,v in default_values.items()})
 
-def plot_func(func):
-    def wrapper_func(*args, **kwargs):
-        show = False
-        if 'ax' not in kwargs or kwargs['ax'] is None:
-            plt.figure()
-            kwargs['ax'] = plt.subplot()
-            show = True
-        func(*args, **kwargs)
-        if show:
-            plt.show()
+def plot_func(subplot_kw={}, show_kw={}, **figure_kw):
+    def wrapper_func(func):
+        def wrapped_func(*args, **kwargs):
+            show = False
+            if 'ax' not in kwargs or kwargs['ax'] is None:
+                plt.figure(**figure_kw)
+                ax = plt.subplot(**subplot_kw)
+                kwargs['ax'] = ax
+                show = True
+            func(*args, **kwargs)
+            if show:
+                plt.tight_layout()
+                plt.show(**show_kw)
+        return wrapped_func
     return wrapper_func
 
 class Ploter:
     pass
 
 class RecordPloter(Ploter):
-    def __init__(self, record_path, filter=None, params=None, debug=False):
+    def __init__(self, record_path, filter=None, methods=['TAB-5,5','TAB-1,1','TAB-S-5,5','TAB-S-1,1','Transformers','Monoxide'], params=None, debug=False):
         self.record_path = pathlib.Path(record_path)
         self.records = []
         for filename in self.record_path.glob("*.json"):
@@ -121,7 +131,11 @@ class RecordPloter(Ploter):
             self.records.append(recorder)
         self.filter = filter
         self.params = params
+        self.methods = methods
         self.debug = debug
+    
+    def set_methods(self, methods):
+        self.methods = methods
 
     def set_params(self, params):
         self.params = params
@@ -137,48 +151,67 @@ class RecordPloter(Ploter):
                 records.append(record)
         return records
     
-    def _prepare_data(self, records, key, params=None, methods=['TAB-5,5','TAB-1,1','TAB-D','Transformers','Monoxide'], operation=None):
+    def _prepare_data(self, records, key, params=None, methods=None, operation=None):
         if params is None:
             params = self.params
+        if methods is None:
+            methods = self.methods
         data = {}
         for record in records:
             method = record.params['method']
             double_addr = record.params['double_addr']
             if method == 'shard':
-                if double_addr:
-                    compress = record.params['compress']
-                    m = f'TAB-{compress[1]},{compress[2]}'
-                else:
-                    m = 'TAB-D'
+                pmatch = record.params['pmatch']
+                compress = record.params['compress']
+                m = 'TAB'
+                if not double_addr:
+                    m += '-S'
+                if not pmatch:
+                    m += '-P'
+                if compress is not None:
+                    m += f'-{compress[1]},{compress[2]}'
             elif method == 'none' and not double_addr:
                 m = 'Monoxide'
             elif method == 'pending' and not double_addr:
                 m = 'Transformers'
             else:
                 continue
-            if m not in methods:
+            if methods is not None and m not in methods:
                 continue
             mdata = data.setdefault(m, {})
             n_shards = record.params['n_shards']
             tx_rate = record.params['tx_rate']
-            value = record.get('info')[key]
+            info = record.get('info')
+            if key not in info:
+                continue
+            value = info[key]
             if operation is not None:
                 value = operation(value, record)
             mdata.setdefault(f"[{n_shards},{tx_rate}]",[]).append(value)
         data_dict = {}
+        if methods is None:
+            methods = data.keys()
         for i, method in enumerate(methods):
             data_list = []
+            if method not in data:
+                continue
             mdata = data[method]
             for param in params:
                 if param in mdata:
                     datas = mdata[param]
                     if self.debug:
                         print(f'Method={method},Param={param},Key={key},Values={datas}')
-                    data_list.append(np.average(datas))
+                    if len(datas)==0:
+                        res = 0
+                    elif isinstance(datas[0], list):
+                        res = [np.average(x) for x in zip(*datas)]
+                    else:
+                        res = np.average(datas)
+                    data_list.append(res)
             data_dict[method] = data_list
         return data_dict
     
-    @plot_func
+    @plot_func()
     def _plot_bar(self, data_dict, params=None, ax=None, title="", x_label="", y_label="", **kwargs):
         if params is None:
             params = self.params
@@ -217,7 +250,7 @@ class RecordPloter(Ploter):
     
     def plot_avg_partition_time(self, filter=None, params=None, title='Avg. Partition Time', **kwargs):
         records = self.get_records(filter)
-        time_dict = self._prepare_data(records, 'partition_time_cost', params=params, methods=['TAB-5,5','TAB-1,1','TAB-D','Transformers'], operation=lambda x,_:sum(x)/len(x))
+        time_dict = self._prepare_data(records, 'partition_time_cost', params=params, operation=lambda x,_:sum(x)/len(x))
         self._plot_bar(time_dict, params=params, title=title, x_label='[K,r]', y_label='Partition time (sec)', **kwargs)
     
     def plot_avg_queue_length(self, filter=None, params=None, title='Avg. Queue Length', **kwargs):
@@ -244,6 +277,122 @@ class RecordPloter(Ploter):
         records = self.get_records(filter)
         lg_dict = self._prepare_data(records, 'local_graph_total_cost', params=params)
         self._plot_bar(lg_dict, params=params, title=title, x_label='[K,r]', y_label='Local Graph Size (Byte)', **kwargs)
+    
+    @plot_func()
+    def _heatmap(self, data_dict, ax:plt.Axes=None, title='', x_label='', y_label='', cmap='viridis', **kwargs):
+        print(data_dict)
+        n = 10
+        ticks = np.arange(n)
+        xlabels = ticks+1
+        ylabels = n-ticks
+        data = np.full((n,n), fill_value=np.nan)
+        for k, v in data_dict.items():
+            c1, c2 = k.split('-')[1].split(',')
+            c1, c2 = int(c1), int(c2)
+            data[n-c1][c2-1] = v
+        ax.set_xticks(ticks, labels=xlabels)
+        ax.set_yticks(ticks, labels=ylabels)
+        ax.set_title(title)
+        image = ax.imshow(data, cmap=cmap)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+        plt.colorbar(mappable=image, ax=ax)
+
+    @plot_func(subplot_kw=dict(projection='3d'))
+    def _surface(self, data_dict, ax:mplot3d.Axes3D=None, title='', x_label='', y_label='', z_label='', elev=None, azim=None, **kwargs):
+        print(data_dict)
+        n = 10
+        ticks = np.arange(1, n+1)
+        x = y = ticks
+        xlabels = ylabels = ticks
+        data = np.full((n,n), fill_value=np.nan)
+        for k, v in data_dict.items():
+            c1, c2 = k.split('-')[1].split(',')
+            c1, c2 = int(c1), int(c2)
+            data[c1-1][c2-1] = v
+        X, Y = np.meshgrid(x, y)
+        ax.view_init(elev=elev, azim=azim)
+        ax.set_xticks(ticks, labels=xlabels)
+        ax.set_yticks(ticks, labels=ylabels)
+        surface = ax.plot_surface(X, Y, data, lw=0.5, rstride=1, cstride=1, cmap='coolwarm', alpha=0.9)
+        ax.set_title(title)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+        ax.set_zlabel(z_label)
+        
+        # plt.colorbar(mappable=surface, ax=ax)
+
+    def plot_map_partition_time(self, filter=None, params=None, title='Partition Time', **kwargs):
+        records = self.get_records(filter)
+        pt_dict = self._prepare_data(records, 'partition_time_total_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v/len(r.get('info')['partition_time_cost']))
+        pt_dict = {k:v[0] for k,v in pt_dict.items()}
+        self._heatmap(pt_dict, title=title, x_label='β', y_label='γ', **kwargs)
+    
+    def plot_map_actual_throughput(self, filter=None, params=None, title='Actual Throughput', **kwargs):
+        records = self.get_records(filter)
+        at_dict = self._prepare_data(records, 'actual_throughput', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)])
+        at_dict = {k:v[0] for k,v in at_dict.items()}
+        self._heatmap(at_dict, title=title, x_label='β', y_label='γ', **kwargs)
+    
+    def plot_map_tx_delay(self, filter=None, params=None, title='Transaction Delay', **kwargs):
+        records = self.get_records(filter)
+        td_dict = self._prepare_data(records, 'tx_delay', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)])
+        td_dict = {k:v[0] for k,v in td_dict.items()}
+        self._heatmap(td_dict, title=title, x_label='β', y_label='γ', **kwargs)
+    
+    def plot_map_state_migration_size(self, filter=None, params=None, title='State Migration Size', **kwargs):
+        records = self.get_records(filter)
+        ss_dict = self._prepare_data(records, 'state_size_total_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v/len(r.get('info')['state_size_cost']))
+        ss_dict = {k:v[0] for k,v in ss_dict.items()}
+        self._heatmap(ss_dict, title=title, x_label='β', y_label='γ', **kwargs)
+    
+    def plot_map_allocation_table_size(self, filter=None, params=None, title='Final Allocation Table Size', **kwargs):
+        records = self.get_records(filter)
+        at_dict = self._prepare_data(records, 'allocation_table_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v[-1])
+        at_dict = {k:v[0] for k,v in at_dict.items()}
+        self._heatmap(at_dict, title=title, x_label='β', y_label='γ', **kwargs)
+    
+    def plot_map_local_graph_size(self, filter=None, params=None, title='Total Size of Local Graphs', **kwargs):
+        records = self.get_records(filter)
+        at_dict = self._prepare_data(records, 'local_graph_total_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v/len(r.get('info')['local_graph_cost']))
+        at_dict = {k:v[0] for k,v in at_dict.items()}
+        self._heatmap(at_dict, title=title, x_label='β', y_label='γ', **kwargs)
+
+    def plot_surface_partition_time(self, filter=None, params=None, title='Running Time of Account Allocation Algorithm', **kwargs):
+        records = self.get_records(filter)
+        pt_dict = self._prepare_data(records, 'partition_time_total_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v/len(r.get('info')['partition_time_cost']))
+        pt_dict = {k:v[0] for k,v in pt_dict.items()}
+        self._surface(pt_dict, title=title, x_label='β', y_label='γ', z_label='Running Time (Second)', **kwargs)
+    
+    def plot_surface_actual_throughput(self, filter=None, params=None, title='Actual Throughput', **kwargs):
+        records = self.get_records(filter)
+        at_dict = self._prepare_data(records, 'actual_throughput', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)])
+        at_dict = {k:v[0] for k,v in at_dict.items()}
+        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label='Throughput (TPS)', **kwargs)
+    
+    def plot_surface_tx_delay(self, filter=None, params=None, title='Transaction Delay', **kwargs):
+        records = self.get_records(filter)
+        td_dict = self._prepare_data(records, 'tx_delay', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)])
+        td_dict = {k:v[0] for k,v in td_dict.items()}
+        self._surface(td_dict, title=title, x_label='β', y_label='γ', z_label='Tx Delay (Second)', **kwargs)
+    
+    def plot_surface_state_migration_size(self, filter=None, params=None, title='Total Size of State Migration', **kwargs):
+        records = self.get_records(filter)
+        ss_dict = self._prepare_data(records, 'state_size_total_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v/1024/1024/len(r.get('info')['state_size_cost']))
+        ss_dict = {k:v[0] for k,v in ss_dict.items()}
+        self._surface(ss_dict, title=title, x_label='β', y_label='γ', z_label='Migration Data Size (MB)', **kwargs)
+    
+    def plot_surface_allocation_table_size(self, filter=None, params=None, title='Final Allocation Table Size', **kwargs):
+        records = self.get_records(filter)
+        at_dict = self._prepare_data(records, 'allocation_table_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v[-1]/1024/1024)
+        at_dict = {k:v[0] for k,v in at_dict.items()}
+        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label='Table Size (MB)', **kwargs)
+    
+    def plot_surface_local_graph_size(self, filter=None, params=None, title='Total Size of Local Graphs', **kwargs):
+        records = self.get_records(filter)
+        at_dict = self._prepare_data(records, 'local_graph_total_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v/1024/1024/len(r.get('info')['local_graph_cost']))
+        at_dict = {k:v[0] for k,v in at_dict.items()}
+        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label='Graph Size (MB)', **kwargs)
 
 import re
 
@@ -288,7 +437,7 @@ class LogPloter(Ploter):
         data = [d/data_max for d in data]
         return data
     
-    @plot_func
+    @plot_func()
     def plot_vpe_cost_and_coverage(self, key=None, ax=None):
         data = self._read_file(key)
         vcosts = self._data_to_list(data, prefix='TotalV-')
@@ -316,7 +465,7 @@ class LogPloter(Ploter):
         ax0.set_ylabel('Coverage')
         ax1.set_ylabel('Cost')
     
-    @plot_func
+    @plot_func()
     def plot_new_ve_ratio(self, key=None, ax=None):
         data = self._read_file(key)
         vratios = [vi[0]/vi[1] for vi in zip(data['NewV'],data['Vertex'])]
@@ -329,7 +478,7 @@ class LogPloter(Ploter):
         ax.set_ylabel('Ratio')
         ax.legend()
     
-    @plot_func
+    @plot_func()
     def plot_cost_and_coverage(self, key=None, type='Vertex', ax=None):
         if type == 'Vertex':
             total_type = 'TotalV-'
@@ -362,7 +511,7 @@ class LogPloter(Ploter):
         ax0.set_ylabel(ylabel0)
         ax1.set_ylabel(ylabel1)
     
-    @plot_func
+    @plot_func()
     def plot_new_accounts_ratio(self, key=None, type='Vertex', ax:plt.Axes=None):
         if type == 'Vertex':
             new_type = 'NewV'

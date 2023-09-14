@@ -176,7 +176,9 @@ class GraphStack:
         new_weight_layer_min = spm_col_min(new_weight_matrix)
         print('weights min:', weight_layer_min, 'new weights min:', new_weight_layer_min)
         print('layer vweight dist:', spm_dist(self.vweight_matrix[:,self.size-1]))
+        print('layer new vweight dist:', spm_dist(new_vweight_matrix[:,self.size-1]))
         print('layer weight dist:', spm_dist(self.weight_matrix[:,self.size-1]))
+        print('layer new weight dist:', spm_dist(new_weight_matrix[:,self.size-1]))
         if self.size>1:
             last_layer_weight = self.weight_matrix[:,self.size-2]
             cur_layer_weight = self.weight_matrix[:,self.size-1]

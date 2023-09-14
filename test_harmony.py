@@ -25,7 +25,10 @@ def test_harmony(txs, method='last', args=None):
 
     overhead = None
     if args.overhead:
-        overhead = Overhead()
+        if args.double_addr:
+            overhead = Overhead(addr_size=40)
+        else:
+            overhead = Overhead(addr_size=20)
     
     simulator_args = dict(client=None, allocate=static_allocator, n_shards=n_shards, n_blocks=n_blocks, tx_per_block=tx_per_block, block_interval=block_interval, shard_allocation=False, 
                           pmatch=args.pmatch, compress=args.compress, overhead=overhead, save_path=args.save_path, timeout=args.timeout, debug=args.debug)
