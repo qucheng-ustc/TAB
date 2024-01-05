@@ -189,10 +189,12 @@ class RecordPloter(Ploter):
                 value = operation(value, record)
             mdata.setdefault(f"[{n_shards},{tx_rate}]",[]).append(value)
         data_dict = {}
+        std_dict = {}
         if methods is None:
             methods = data.keys()
         for i, method in enumerate(methods):
             data_list = []
+            std_list = []
             if method not in data:
                 continue
             mdata = data[method]
@@ -205,10 +207,15 @@ class RecordPloter(Ploter):
                         res = 0
                     elif isinstance(datas[0], list):
                         res = [np.average(x) for x in zip(*datas)]
+                        std = [np.std(x) for x in zip(*datas)]
                     else:
                         res = np.average(datas)
+                        std = np.std(datas)
                     data_list.append(res)
+                    std_list.append(std)
             data_dict[method] = data_list
+            std_dict[method] = std_list
+            print(method, ': avg.:', data_list, 'std.:', std_list)
         return data_dict
     
     @plot_func()
@@ -220,7 +227,6 @@ class RecordPloter(Ploter):
         bar_width = 1./(n_series+1)
         for i, method in enumerate(data_dict):
             data_list = data_dict[method]
-            print(method, ':', data_list)
             ax.bar(np.arange(len(data_list))+i*bar_width, data_list, bar_width, label=method)
         ax.set_xticks(np.arange(len(params))+bar_width/2*len(data_dict), params)
         ax.legend()
@@ -277,6 +283,27 @@ class RecordPloter(Ploter):
         records = self.get_records(filter)
         lg_dict = self._prepare_data(records, 'local_graph_total_cost', params=params)
         self._plot_bar(lg_dict, params=params, title=title, x_label='[K,r]', y_label='Local Graph Size (Byte)', **kwargs)
+
+    def plot_avg_state_migration_size_mb(self, filter=None, params=None, title='Avg. Size of Migrated State', **kwargs):
+        records = self.get_records(filter)
+        def operation(v, r):
+            l = len(r.get('info')['state_size_cost'])
+            return v/1024/1024/l if l else 0
+        ss_dict = self._prepare_data(records, 'state_size_total_cost', params=params, operation=operation)
+        self._plot_bar(ss_dict, params=params, title=title, x_label='[K,r]', y_label='State Size (MB)')
+    
+    def plot_allocation_table_size_mb(self, filter=None, params=None, title='Final Allocation Table Size', **kwargs):
+        records = self.get_records(filter)
+        at_dict = self._prepare_data(records, 'allocation_table_cost', params=params, operation=lambda v,r:v[-1]/1024/1024 if v else 0)
+        self._plot_bar(at_dict, params=params, title=title, x_label='[K,r]', y_label='Allcation Table Size (MB)', **kwargs)
+
+    def plot_avg_local_graph_size_mb(self, filter=None, params=None, title='Avg. Local Graph Size', **kwargs):
+        records = self.get_records(filter)
+        def operation(v, r):
+            l = len(r.get('info')['local_graph_cost'])
+            return v/1024/1024/l if l else 0
+        lg_dict = self._prepare_data(records, 'local_graph_total_cost', params=params, operation=operation)
+        self._plot_bar(lg_dict, params=params, title=title, x_label='[K,r]', y_label='Local Graph Size (MB)', **kwargs)
     
     @plot_func()
     def _heatmap(self, data_dict, ax:plt.Axes=None, title='', x_label='', y_label='', cmap='viridis', **kwargs):
