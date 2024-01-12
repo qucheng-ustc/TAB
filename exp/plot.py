@@ -247,12 +247,12 @@ class RecordPloter(Ploter):
     def plot_actual_throughput(self, filter=None, params=None, title='Actual Throughput', **kwargs):
         records = self.get_records(filter)
         tps_dict = self._prepare_data(records, 'actual_throughput', params=params)
-        self._plot_bar(tps_dict, params=params, title=title, x_label='[K,r]', y_label='P (TPS)', **kwargs)
+        self._plot_bar(tps_dict, params=params, title=title, x_label='[K,r]', y_label='Throughput (TPS)', **kwargs)
     
     def plot_tx_delay(self, filter=None, params=None, title='Transaction Delay', **kwargs):
         records = self.get_records(filter)
         delay_dict = self._prepare_data(records, 'tx_delay', params=params)
-        self._plot_bar(delay_dict, params=params, title=title, x_label='[K,r]', y_label='L (sec)', **kwargs)
+        self._plot_bar(delay_dict, params=params, title=title, x_label='[K,r]', y_label='Latency (sec)', **kwargs)
     
     def plot_avg_partition_time(self, filter=None, params=None, title='Avg. Partition Time', **kwargs):
         records = self.get_records(filter)
