@@ -385,7 +385,7 @@ class RecordPloter(Ploter):
         at_dict = {k:v[0] for k,v in at_dict.items()}
         self._heatmap(at_dict, title=title, x_label='β', y_label='γ', **kwargs)
 
-    def plot_surface_partition_time(self, filter=None, params=None, title='Running Time of Account Allocation Algorithm', **kwargs):
+    def plot_surface_partition_time(self, filter=None, params=None, title='Partition Time', **kwargs):
         records = self.get_records(filter)
         pt_dict = self._prepare_data(records, 'partition_time_total_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v/len(r.get('info')['partition_time_cost']))
         pt_dict = {k:v[0] for k,v in pt_dict.items()}
