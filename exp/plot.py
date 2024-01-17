@@ -343,9 +343,18 @@ class RecordPloter(Ploter):
         ax.set_yticks(ticks, labels=ylabels)
         surface = ax.plot_surface(X, Y, data, lw=0.5, rstride=1, cstride=1, cmap='coolwarm', alpha=0.9)
         ax.set_title(title)
-        ax.set_xlabel(x_label)
-        ax.set_ylabel(y_label)
-        ax.set_zlabel(z_label)
+        if isinstance(x_label, dict):
+            ax.set_xlabel(**x_label)
+        else:
+            ax.set_xlabel(x_label)
+        if isinstance(y_label, dict):
+            ax.set_ylabel(**y_label)
+        else:
+            ax.set_ylabel(y_label)
+        if isinstance(z_label, dict):
+            ax.set_zlabel(**z_label)
+        else:
+            ax.set_zlabel(z_label)
         
         # plt.colorbar(mappable=surface, ax=ax)
 
@@ -395,13 +404,13 @@ class RecordPloter(Ploter):
         records = self.get_records(filter)
         at_dict = self._prepare_data(records, 'actual_throughput', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)])
         at_dict = {k:v[0] for k,v in at_dict.items()}
-        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label='Throughput (TPS)', **kwargs)
+        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label=dict(zlabel='Throughput (TPS)',labelpad=10), **kwargs)
     
     def plot_surface_tx_delay(self, filter=None, params=None, title='Transaction Delay', **kwargs):
         records = self.get_records(filter)
         td_dict = self._prepare_data(records, 'tx_delay', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)])
         td_dict = {k:v[0] for k,v in td_dict.items()}
-        self._surface(td_dict, title=title, x_label='β', y_label='γ', z_label='Tx Delay (Second)', **kwargs)
+        self._surface(td_dict, title=title, x_label='β', y_label='γ', z_label=dict(zlabel='Tx Delay (Second)', labelpad=5), **kwargs)
     
     def plot_surface_state_migration_size(self, filter=None, params=None, title='Total Size of State Migration', **kwargs):
         records = self.get_records(filter)
@@ -413,7 +422,7 @@ class RecordPloter(Ploter):
         records = self.get_records(filter)
         at_dict = self._prepare_data(records, 'allocation_table_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v[-1]/1024/1024)
         at_dict = {k:v[0] for k,v in at_dict.items()}
-        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label='Table Size (MB)', **kwargs)
+        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label=dict(zlabel='Table Size (MB)',labelpad=3), **kwargs)
     
     def plot_surface_local_graph_size(self, filter=None, params=None, title='Total Size of Local Graphs', **kwargs):
         records = self.get_records(filter)
