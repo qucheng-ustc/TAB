@@ -9,12 +9,12 @@ from mpl_toolkits import mplot3d
 from exp.recorder import Recorder
 
 class Subplots:
-    def __init__(self, nrows=1, ncols=1, figsize=None, projection=None):
+    def __init__(self, nrows=1, ncols=1, figsize=None, projection=None, gridspec_kw=None):
         self.nrows = nrows
         self.ncols = ncols
         if figsize is None:
             figsize = (7*ncols-2, 5*nrows)
-        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, squeeze=False, figsize=figsize, subplot_kw=dict(projection=projection))
+        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, squeeze=False, figsize=figsize, subplot_kw=dict(projection=projection), gridspec_kw=gridspec_kw)
         self.fig = fig
         self.axes = axes
     
@@ -233,16 +233,18 @@ class RecordPloter(Ploter):
         ax.set_title(title)
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
+        if 'y_formatter' in kwargs:
+            ax.yaxis.set_major_formatter(kwargs['y_formatter'])
     
     def plot_cross_rate(self, filter=None, params=None, title='Cross Rate', **kwargs):
         records = self.get_records(filter)
         cross_dict = self._prepare_data(records, 'prop_cross_tx', params=params)
-        self._plot_bar(cross_dict, params=params, title=title, x_label='[K,r]', y_label='ε', **kwargs)
+        self._plot_bar(cross_dict, params=params, title=title, x_label='[K,r]', y_label='Cross Rate', **kwargs)
     
     def plot_utility(self, filter=None, params=None, title='Utility', **kwargs):
         records = self.get_records(filter)
         utility_dict = self._prepare_data(records, 'prop_wasted', params=params, operation=lambda x,_:1-x)
-        self._plot_bar(utility_dict, params=params, title=title, x_label='[K,r]', y_label='U', **kwargs)
+        self._plot_bar(utility_dict, params=params, title=title, x_label='[K,r]', y_label='Utilization', **kwargs)
 
     def plot_actual_throughput(self, filter=None, params=None, title='Actual Throughput', **kwargs):
         records = self.get_records(filter)
