@@ -497,7 +497,7 @@ class RecordPloter(Ploter):
         records = self.get_records(filter)
         at_dict = self._prepare_data(records, 'local_graph_total_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v/1024/1024/len(r.get('info')['local_graph_cost']))
         at_dict = {k:v[0] for k,v in at_dict.items()}
-        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label=dict(zlabel='Graph Size (MB)',labelpad=3), **kwargs)
+        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label=dict(zlabel='Graph Size (MB)',labelpad=8), **kwargs)
 
 import re
 
@@ -544,7 +544,7 @@ class LogPloter(Ploter):
         return data
     
     @plot_func()
-    def plot_vpe_cost_and_coverage(self, key=None, ax=None):
+    def plot_vpe_cost_and_coverage(self, key=None, ax=None, title='Account Graph Cost and Coverage',**kwargs):
         data = self._read_file(key)
         vcosts = self._data_to_list(data, prefix='TotalV-')
         ecosts = self._data_to_list(data, prefix='TotalE-')
@@ -557,32 +557,40 @@ class LogPloter(Ploter):
         ax0 = ax
         bar_width = 0.3
         print('VCoverage:', vcoverage_list)
-        ax0.bar(np.arange(n), vcoverage_list, bar_width, color='blue', label='Vertexes Coverage')
+        ax0.bar(np.arange(n), vcoverage_list, bar_width, color='blue', label='Vertex Coverage')
         print('ECoverage:', ecoverage_list)
-        ax0.bar(np.arange(n)+bar_width, ecoverage_list, bar_width, color='green', label='Edges Coverage')
+        ax0.bar(np.arange(n)+bar_width, ecoverage_list, bar_width, color='green', label='Edge Coverage')
         ax1 = ax0.twinx()
         print('Cost:', cost_list)
         ax1.plot(np.arange(n), cost_list, color='red', label='Cost')
         ax0.set_xticks(np.arange(n)+bar_width/2, np.arange(1,n+1))
         ax0.legend(loc='upper left')
         ax1.legend(loc='upper right')
-        ax0.set_title('Account Graph Cost and Coverage')
+        if title is not None:
+            ax0.set_title(title)
         ax0.set_xlabel('φ')
         ax0.set_ylabel('Coverage')
         ax1.set_ylabel('Cost')
+        ax0.set_ylim((0,0.5))
+        ax1.set_ylim((0,2e6))
+        if 'grid' in kwargs:
+            plt.grid(**kwargs['grid'])
     
     @plot_func()
-    def plot_new_ve_ratio(self, key=None, ax=None):
+    def plot_new_ve_ratio(self, key=None, ax=None,title='Ratio of New Vertexes and Edges',**kwargs):
         data = self._read_file(key)
         vratios = [vi[0]/vi[1] for vi in zip(data['NewV'],data['Vertex'])]
         eratios = [vi[0]/vi[1] for vi in zip(data['NewE'],data['Edge'])]
         ax.plot(range(len(vratios)), vratios, label='New Vertexes', color='blue')
         ax.plot(range(len(eratios)), eratios, label='New Edges', color='green')
         ax.set_ylim((0,1))
-        ax.set_title('Ratio of New Vertexes and Edges')
+        if title is not None:
+            ax.set_title(title)
         ax.set_xlabel('Steps')
         ax.set_ylabel('Ratio')
         ax.legend()
+        if 'grid' in kwargs:
+            plt.grid(**kwargs['grid'])
     
     @plot_func()
     def plot_cost_and_coverage(self, key=None, type='Vertex', ax=None):
