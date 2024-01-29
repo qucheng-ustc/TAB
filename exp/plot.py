@@ -101,27 +101,90 @@ class Filter:
 
 default_filter = Filter({k:[v] for k,v in default_values.items()})
 
-def plot_func(subplot_kw={}, show_kw={}, **figure_kw):
+class PloterContext:
+    def __init__(self, ploter, **kwargs):
+        self.ploter = ploter
+        self.attr = kwargs
+        self.old_attr = {}
+        self.new_attr = {}
+    
+    def set(self, **kwargs):
+        for k, v in kwargs.items():
+            self.attr[k] = v
+        return self
+
+    def __enter__(self):
+        for k, v in self.attr.items():
+            if hasattr(self.ploter, k):
+                self.old_attr[k] = getattr(self.ploter, k)
+            else:
+                self.new_attr[k] = k
+            setattr(self.ploter, k, v)
+
+    def __exit__(self, type, value, traceback):
+        for k, v in self.old_attr.items():
+            setattr(self.ploter, k, v)
+        for k in self.new_attr:
+            delattr(self.ploter, k)
+        self.old_attr = {}
+        self.new_attr = {}
+
+class Ploter:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        pass
+    
+    def context(self, **kwargs):
+        return PloterContext(self, **kwargs)
+
+def plot_func(subplot_kw={}, show_kw={}, figure_kw={}, tight_layout={}):
     def wrapper_func(func):
         def wrapped_func(*args, **kwargs):
+            nonlocal figure_kw, subplot_kw, show_kw, tight_layout
+            ploter = args[0]
+            figure_kw = figure_kw.copy()
+            subplot_kw = subplot_kw.copy()
+            show_kw = show_kw.copy()
+            save_kw = {}
+            if isinstance(ploter, Ploter):
+                if hasattr(ploter, 'figure_kw'):
+                    figure_kw.update(ploter.figure_kw)
+                if hasattr(ploter, 'subplot_kw'):
+                    subplot_kw.update(ploter.subplot_kw)
+                if hasattr(ploter, 'show_kw'):
+                    show_kw.update(ploter.show_kw)
+                if hasattr(ploter, 'save_kw'):
+                    save_kw.update(ploter.save_kw)
+                if hasattr(ploter, 'rename'):
+                    kwargs['rename'] = ploter.rename
+                if hasattr(ploter, 'tight_layout'):
+                    tight_layout = ploter.tight_layout
+                if hasattr(ploter, 'kwargs'):
+                    kwargs.update(ploter.kwargs)
             show = False
+            save = False
             if 'ax' not in kwargs or kwargs['ax'] is None:
-                plt.figure(**figure_kw)
+                fig = plt.figure(**figure_kw)
                 ax = plt.subplot(**subplot_kw)
                 kwargs['ax'] = ax
                 show = True
+                if len(save_kw)>0:
+                    save = True
             func(*args, **kwargs)
             if show:
-                plt.tight_layout()
+                if tight_layout is not None:
+                    plt.tight_layout(**tight_layout)
                 plt.show(**show_kw)
+                if save:
+                    fig.savefig(**save_kw)
         return wrapped_func
     return wrapper_func
 
-class Ploter:
-    pass
-
 class RecordPloter(Ploter):
     def __init__(self, record_path, filter=None, methods=['TAB-5,5','TAB-1,1','TAB-S-5,5','TAB-S-1,1','Transformers','Monoxide'], params=None, debug=False):
+        super().__init__()
         self.record_path = pathlib.Path(record_path)
         self.records = []
         for filename in self.record_path.glob("*.json"):
@@ -225,12 +288,16 @@ class RecordPloter(Ploter):
         print('Params:', params)
         n_series = len(data_dict)
         bar_width = 1./(n_series+1)
+        rename = {}
+        if 'rename' in kwargs:
+            rename = kwargs['rename']
         for i, method in enumerate(data_dict):
             data_list = data_dict[method]
-            ax.bar(np.arange(len(data_list))+i*bar_width, data_list, bar_width, label=method)
-        ax.set_xticks(np.arange(len(params))+bar_width/2*len(data_dict), params)
+            ax.bar(np.arange(len(data_list))+i*bar_width, data_list, bar_width, label=rename.get(method, method))
+        ax.set_xticks(np.arange(len(params))+bar_width/2*(n_series-1), params)
         ax.legend()
-        ax.set_title(title)
+        if title is not None:
+            ax.set_title(title)
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
         if 'y_formatter' in kwargs:
@@ -412,7 +479,7 @@ class RecordPloter(Ploter):
         records = self.get_records(filter)
         td_dict = self._prepare_data(records, 'tx_delay', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)])
         td_dict = {k:v[0] for k,v in td_dict.items()}
-        self._surface(td_dict, title=title, x_label='β', y_label='γ', z_label=dict(zlabel='Tx Delay (Second)', labelpad=5), **kwargs)
+        self._surface(td_dict, title=title, x_label='β', y_label='γ', z_label=dict(zlabel='Tx Latency (Second)', labelpad=10), **kwargs)
     
     def plot_surface_state_migration_size(self, filter=None, params=None, title='Total Size of State Migration', **kwargs):
         records = self.get_records(filter)
@@ -424,18 +491,19 @@ class RecordPloter(Ploter):
         records = self.get_records(filter)
         at_dict = self._prepare_data(records, 'allocation_table_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v[-1]/1024/1024)
         at_dict = {k:v[0] for k,v in at_dict.items()}
-        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label=dict(zlabel='Table Size (MB)',labelpad=3), **kwargs)
+        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label=dict(zlabel='Table Size (MB)',labelpad=10), **kwargs)
     
     def plot_surface_local_graph_size(self, filter=None, params=None, title='Total Size of Local Graphs', **kwargs):
         records = self.get_records(filter)
         at_dict = self._prepare_data(records, 'local_graph_total_cost', params=params, methods=[f'TAB-{c1},{c2}' for c1 in range(1, 11) for c2 in range(c1, 11)], operation=lambda v,r:v/1024/1024/len(r.get('info')['local_graph_cost']))
         at_dict = {k:v[0] for k,v in at_dict.items()}
-        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label='Graph Size (MB)', **kwargs)
+        self._surface(at_dict, title=title, x_label='β', y_label='γ', z_label=dict(zlabel='Graph Size (MB)',labelpad=3), **kwargs)
 
 import re
 
 class LogPloter(Ploter):
     def __init__(self, log_file):
+        super().__init__()
         self.log_file = log_file
     
     def _get_list_data(self, list_str):
