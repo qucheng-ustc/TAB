@@ -309,6 +309,8 @@ class RecordPloter(Ploter):
             ax.set_ylim(**kwargs['y_lim'])
         if 'y_formatter' in kwargs:
             ax.yaxis.set_major_formatter(kwargs['y_formatter'])
+        if 'grid' in kwargs:
+            plt.grid(**kwargs['grid'])
     
     def plot_cross_rate(self, filter=None, params=None, title='Cross Rate', **kwargs):
         records = self.get_records(filter)
