@@ -295,11 +295,18 @@ class RecordPloter(Ploter):
             data_list = data_dict[method]
             ax.bar(np.arange(len(data_list))+i*bar_width, data_list, bar_width, label=rename.get(method, method))
         ax.set_xticks(np.arange(len(params))+bar_width/2*(n_series-1), params)
-        ax.legend()
+        if 'y_ticks' in kwargs:
+            ax.set_yticks(**kwargs['y_ticks'])
+        legend_kw = {}
+        if 'legend' in kwargs:
+            legend_kw = kwargs['legend']
+        ax.legend(**legend_kw)
         if title is not None:
             ax.set_title(title)
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
+        if 'y_lim' in kwargs:
+            ax.set_ylim(**kwargs['y_lim'])
         if 'y_formatter' in kwargs:
             ax.yaxis.set_major_formatter(kwargs['y_formatter'])
     
