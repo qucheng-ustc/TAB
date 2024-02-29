@@ -6,7 +6,7 @@ Note: TAB means Transaction Allocation in Blockchain, this repository is for res
 
 ## Requirements
 
-**System**: 48 vCPUs, 128G Memory, 200G Disk
+**System**: 48 vCPUs, 128G Memory, 200G Disk (Recommended)
 
 **OS**:  Ubuntu 18.04
 
@@ -65,7 +65,7 @@ Database connection configs can be changed in ./arrl/dataloader.py
 └── test_vpred.py               : Test code, for the workload prediction with ML
 ```
 
-## Setup
+## Setup <a id="sec:setup"></a>
 
 ### 1. Install Anaconda3 and create a python environment, install all dependencies  
 
@@ -193,3 +193,74 @@ These paths can be changed in the test_harmony.py.
 ### Plotting results
 
 See the "plot.ipynb" or "plot_for_paper.ipynb", note you need to change the parameter of RecordPloter to the actual experiment record output path.
+
+## Reproduce paper results
+
+Step by step instructions to reproduce experiment results in paper "SwiftShard: Efficient Account Allocation with Low Overhead in Blockchain Sharding".
+
+### 0. Prepare
+
+Makesure the system and OS meet the requirements, follow the [Setup](#sec:setup) section to setup the experiment environment.
+
+If experiment crashs due to OOM, make the ```max_prefetch``` parameter of ```TxLoader.__init__``` smaller may help, it can be changed in "./arrl/dataloader.py".
+
+### 1. Performance Experiments
+
+Following scripts can produce all performance results shown in the paper. Note it takes days to finish all experiments.
+
+```bash
+./run_harmony_exp.sh 1 200
+./run_harmony_exp.sh 1 300
+./run_harmony_exp.sh 1 400
+./run_harmony_exp.sh 2 400
+./run_harmony_exp.sh 2 600
+./run_harmony_exp.sh 2 800
+./run_harmony_exp.sh 3 800
+./run_harmony_exp.sh 3 1200
+./run_harmony_exp.sh 3 1600
+./run_harmony_exp.sh 4 1600
+./run_harmony_exp.sh 4 2400
+./run_harmony_exp.sh 4 3200
+./run_harmony_exp.sh 5 3200
+./run_harmony_exp.sh 5 4800
+./run_harmony_exp.sh 5 6400
+mv ./records/test_harmony ./records/test_harmony_performance
+```
+
+Results are saved in ./records/test_harmony_performance.
+
+### 2. Ablation Experiments
+
+```bash
+./ablation_harmony_exp.sh 4 3200
+mv ./records/test_harmony ./records/test_harmony_ablation
+```
+
+Results are saved in ./records/test_harmony_ablation.
+
+### 3. Parameter Sensitivity
+
+```bash
+./overhead_harmony_exp.sh 4 3200
+mv ./records/test_harmony ./records/test_harmony_overhead
+```
+
+Results are saved in ./records/test_harmony_overhead
+
+### 4. Transaction Analysis
+
+Conduct the transaction analysis to produce "New Accounts and Edges" and "Cost and Coverage" figures.
+
+```bash
+python test_stack.py --type update --step_size 160000 --start_time="2021-07-20 00:00:00" --end_time="2021-08-05 00:00:00"
+```
+
+Results are saved in ./log/test_stack.log.
+
+### 5. Plots
+
+After all experiments results saved, open "plot_for_paper.ipynb" and run all cells to print all the experiment results and draw all figures in the paper.  
+
+Note: If the matplotlib complain about fonts not found, copy font files in the ./fonts into the matplotlib package directory: ~/anaconda3/envs/arrl/lib/python3.10/site-packages/matplotlib/mpl-data/fonts/ttf
+
+All the figures are saved in ./images.
