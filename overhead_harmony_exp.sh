@@ -9,9 +9,9 @@ export TX_RATE=$2
 export N_EPOCHS=10
 export OVERHEAD=--overhead
 
-for COMPRESS_V in {11..20};do
-  # for COMPRESS_S in `seq $COMPRESS_V 10`;do
-    export COMPRESS="1 $COMPRESS_V $COMPRESS_V"
+for COMPRESS_V in {1..10};do
+  for COMPRESS_S in `seq $COMPRESS_V 10`;do
+    export COMPRESS="1 $COMPRESS_V $COMPRESS_S"
 
     echo "COMPRESS: $COMPRESS";
 
@@ -26,5 +26,5 @@ for COMPRESS_V in {11..20};do
     export START_TIME="2021-06-01 00:00:00"
     export END_TIME="2021-08-01 00:00:00"
     run_shard_exp;
-  # done
+  done
 done
