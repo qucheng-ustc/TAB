@@ -345,7 +345,7 @@ class RecordPloter(Ploter):
     def plot_queue_length_std(self, filter=None, params=None, title='Queue Length Stddev.', **kwargs):
         records = self.get_records(filter)
         ql_dict = self._prepare_data(records, 'pending_length_std', params=params)
-        self._plot_bar(ql_dict, params=params, title=title, x_label='[K,r]', y_label='Queue Length Stddev.', **kwargs)
+        self._plot_bar(ql_dict, params=params, title=title, x_label='[K,r]', y_label='Queue Length Std.', **kwargs)
     
     def plot_state_migration_size(self, filter=None, params=None, title='Total Size of Migrated State', **kwargs):
         records = self.get_records(filter)
