@@ -3,7 +3,7 @@ from distutils.core import setup, Extension
 mymetismodule = Extension('mymetis',
                     define_macros = [('MAJOR_VERSION', '1'),
                                      ('MINOR_VERSION', '0')],
-                    include_dirs = ['/usr/local/include', '/mnt/ssd/qucheng/anaconda3/envs/arrl/include/python3.10'],
+                    include_dirs = ['/usr/local/include', '$HOME/anaconda3/envs/arrl/include/python3.10'],
                     libraries = ['metis'],
                     library_dirs = ['/usr/local/lib'],
                     sources = ['mymetis.cpp'])

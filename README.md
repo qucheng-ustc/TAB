@@ -95,6 +95,10 @@ There are also a source code package in the path "./metis", more information ref
 
 ### 3. Install MySQL
 
+```bash
+sudo apt install mysql-server
+```
+
 <https://www.mysql.com/>
 
 ### 4. Download data, create database and import data
@@ -110,8 +114,12 @@ tar zvxf data.tar.gz
 Create a database named arrl in MySQL database and import data:
 
 ```bash
-mysql < block.sql
-mysql < tx.sql
+mysql -e "create database arrl;"
+```
+
+```bash
+mysql arrl < block.sql
+mysql arrl < tx.sql
 ```
 
 ### 6. Compile and install mymetis
@@ -124,7 +132,7 @@ We implement this lib for enabling calling metis from python.
 
 ```bash
 cd ./graph/mymetis
-python setup.py install
+pip install -e .
 ```
 
 ### 7. Config paths in test_harmony.py
